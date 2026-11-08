@@ -1,0 +1,27 @@
+{
+  "experienceMultiplier": 1,
+  "description": "Long term server with a stable host and a growing community. ",
+  "spawn": {
+    "x": 3222,
+    "y": 3218,
+    "z": 0
+  },
+  "plugins": {
+    "PlayerBots": true,
+    "StressTestBots": false,
+    "PvpMode": false
+  },
+  "pluginConfig": {
+    "PlayerBots:ai": false,
+    "CastleWars:seedBots": false,
+    "SoulWars:seedBots": false,
+    "LastManStanding:seedBots": true,
+    "Farming:growthMultiplier": 10,
+    "RevenantCaves:entryFee": 0,
+    "WildernessBosses:entryFee": 0,
+    "PlayerBots:allowedActivities": [
+      "last-man-standing",
+      "bounty-hunter"
+    ]
+  }
+}
