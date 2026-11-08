@@ -967,9 +967,9 @@ export class Player extends Mobile {
         this.fixedViewDistance = distance == null ? null : Math.max(1, Math.min(64, Math.trunc(distance)));
     }
 
-    /** How far away NPCs (and their projectiles) are seen; 15 unless an area widens it. */
+    /** How far away NPCs (and their projectiles) are seen; Voidburn defaults to 52 tiles. */
     private npcViewDistance = Player.NPC_VIEW_DISTANCE;
-    private static readonly NPC_VIEW_DISTANCE = 15;
+    private static readonly NPC_VIEW_DISTANCE = 52;
     /** NPC positions are sent as signed 8-bit offsets from the player. */
     private static readonly MAX_NPC_VIEW_DISTANCE = 127;
 
@@ -979,7 +979,7 @@ export class Player extends Mobile {
 
     /**
      * Widens how far NPCs are seen, as OSRS does in some large arenas (the Doom of Mokhaiotl's
-     * fight uses the large NPC update throughout). null puts it back to 15.
+     * fight uses the large NPC update throughout). null puts it back to the default visibility distance.
      */
     public setNpcViewDistance(distance: number | null): void {
         this.npcViewDistance = distance == null

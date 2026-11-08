@@ -271,7 +271,8 @@ function bootPlayerBotsRuntime(options = {}) {
     peekMovementRequest,
   });
 
-  runtime.scheduleInitialSpawn();
+  // A restricted runtime serves explicit activity requests, never world populations.
+  if (api.getPluginConfig?.("PlayerBots:allowedActivities", null) == null) runtime.scheduleInitialSpawn();
 
   return {
     runtime,

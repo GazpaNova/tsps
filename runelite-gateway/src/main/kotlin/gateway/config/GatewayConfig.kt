@@ -46,8 +46,8 @@ data class GatewayConfig(
                 keyFile = if (!Files.exists(keyFile) && Files.exists(legacyKeyFile)) legacyKeyFile else keyFile,
                 publicHost = env["PUBLIC_HOST"]?.takeIf { it.isNotBlank() } ?: DEFAULT_PUBLIC_HOST,
                 bindHost = env["GATEWAY_BIND_HOST"]?.takeIf { it.isNotBlank() } ?: DEFAULT_BIND_HOST,
-                loginUtilitiesPort = env["GATEWAY_LOGIN_HTTP_PORT"]?.toInt() ?: 0,
-                loginUtilitiesTrustLoopbackProxy = env["GATEWAY_LOGIN_TRUST_LOOPBACK_PROXY"] == "true",
+                loginUtilitiesPort = (env["GATEWAY_LOGIN_HTTP_PORT"] ?: env["LOGIN_UTILITIES_PORT"])?.toInt() ?: 0,
+                loginUtilitiesTrustLoopbackProxy = (env["GATEWAY_LOGIN_TRUST_LOOPBACK_PROXY"] ?: env["LOGIN_UTILITIES_TRUST_LOOPBACK_PROXY"]) == "true",
             )
         }
 

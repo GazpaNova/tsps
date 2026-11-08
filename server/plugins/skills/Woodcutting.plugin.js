@@ -68,6 +68,8 @@ const LOGS_CHOPPED_ATTRIBUTE = "woodcutting:logs-chopped";
 // Fallback for multi-log trees without a known Forestry despawn timer: 1/8 per log.
 const MULTI_TREE_DEPLETION_ROLL_MAX = 15;
 const MULTI_TREE_DEPLETION_THRESHOLD = 2;
+// Voidburn: resource trees last ten times longer; respawn and log/XP rates stay unchanged.
+const TREE_LIFETIME_MULTIPLIER = 10;
 // OSRS Forestry: a tree's despawn timer counts down one per tick while anyone is chopping it
 // and regenerates one per tick while nobody is; it falls on the first log after reaching 0.
 const treeDespawnTimers = new Map();
@@ -263,6 +265,7 @@ const TREES = [
   },
   {
     name: "normal tree",
+    lifetimeMultiplier: 1, // Voidburn: ordinary log trees fall after their first successful chop.
     objectNames: ["Tree", "Dead tree", "Evergreen tree", "Dying tree"],
     action: ["Chop down", "Chop-down"],
     requiredLevel: 1,
@@ -879,7 +882,8 @@ function tickTreeDespawnTimer(state, currentTick) {
   const key = treeTimerKey(state.objectId, state.location);
   let timer = treeDespawnTimers.get(key);
   if (!timer) {
-    timer = { remaining: state.tree.despawnTicks, max: state.tree.despawnTicks, lastChopTick: -1 };
+    const duration = state.tree.despawnTicks * (state.tree.lifetimeMultiplier ?? TREE_LIFETIME_MULTIPLIER);
+    timer = { remaining: duration, max: duration, lastChopTick: -1 };
     treeDespawnTimers.set(key, timer);
   }
   // Several players on one tree still only drain it once per tick.
@@ -906,17 +910,20 @@ function shouldDepleteTree(state) {
   if (tree.depletes === false) {
     return false;
   }
+  // Removing a farmed/quest tree must still finish on its first successful chop.
+  // Blisterwood spiders interrupt chopping without felling the tree.
+  const multiplier = tree.logId < 0 || tree.interruptMessage ? 1 : (tree.lifetimeMultiplier ?? TREE_LIFETIME_MULTIPLIER);
   if (!tree.multi) {
-    return true;
+    return randomIntInclusive(1, multiplier) === 1;
   }
   if (tree.despawnTicks) {
     const timer = treeDespawnTimers.get(treeTimerKey(state.objectId, state.location));
     return !!timer && timer.remaining <= 0;
   }
   if (tree.depleteChance) {
-    return randomIntInclusive(1, tree.depleteChance) === 1;
+    return randomIntInclusive(1, tree.depleteChance * multiplier) === 1;
   }
-  const roll = randomIntInclusive(0, MULTI_TREE_DEPLETION_ROLL_MAX);
+  const roll = randomIntInclusive(0, (MULTI_TREE_DEPLETION_ROLL_MAX + 1) * multiplier - 1);
   return roll < MULTI_TREE_DEPLETION_THRESHOLD;
 }
 

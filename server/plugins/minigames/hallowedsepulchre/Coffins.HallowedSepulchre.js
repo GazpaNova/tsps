@@ -11,6 +11,12 @@ const Obstacles = require("./Obstacles.HallowedSepulchre");
 const TIERS = ["low", "mid", "high"];
 const GRAND_AGILITY_REQUIREMENT = 92;
 
+function uniqueMultiplier(player) {
+  const request = { player, minigame: "hallowed-sepulchre", kind: "unique", multiplier: 1 };
+  Common.api?.emitCustomEvent?.("minigame:chance", request);
+  return Math.max(1, Number(request.multiplier) || 1);
+}
+
 function successChance(player) {
   const { base, max, lockpick, strangeLockpick } = Common.data.thieving;
   const level = Math.min(max[0], Common.level(player, "THIEVING"));
@@ -23,17 +29,17 @@ function successChance(player) {
 
 function rollEntry(table) {
   const [id, min, max] = Common.randomOf(Common.data.loot[table]);
-  return [id, Common.randomInt(min, max)];
+  return [id, Common.randomInt(min, max) * 2]; // Voidburn ordinary loot quantity.
 }
 
 /** The Wiki's coffin loot for `floor`: marks, one tier roll, and the lockpick by chance. */
-function coffinLoot(floor) {
+function coffinLoot(floor, player = null) {
   const { loot } = Common.data;
   const [min, max] = loot.marks[String(floor)];
   const drops = [[Common.data.items.mark, Common.randomInt(min, max)]];
   const tier = Common.weighted(loot.tiers[String(floor)].map((weight, index) => [TIERS[index], weight]));
   drops.push(rollEntry(tier));
-  if (Math.random() < 1 / loot.lockpick[String(floor)]) drops.push([Common.data.items.strangeLockpick, 1]);
+  if (Math.random() < Math.min(1, uniqueMultiplier(player) / loot.lockpick[String(floor)])) drops.push([Common.data.items.strangeLockpick, 1]);
   return drops;
 }
 
@@ -48,10 +54,10 @@ function boostMarks(player, loot) {
 }
 
 /** The Grand Hallowed Coffin (Wiki): 8-10 marks, the high table, the ring at 1/200. */
-function grandLoot() {
+function grandLoot(player = null) {
   const { grand } = Common.data.loot;
   const drops = [[Common.data.items.mark, Common.randomInt(...grand.marks)], rollEntry("high")];
-  if (Math.random() < 1 / grand.ringChance) drops.push([grand.ring, 1]);
+  if (Math.random() < Math.min(1, uniqueMultiplier(player) / grand.ringChance)) drops.push([grand.ring, 1]);
   return drops;
 }
 
@@ -115,7 +121,7 @@ function open(event) {
     run.schedule(3, () => {
       if (run.looted.has(slot)) return;
       run.looted.add(slot);
-      give(player, boostMarks(player, grand ? grandLoot() : coffinLoot(run.floorNumber)));
+      give(player, boostMarks(player, grand ? grandLoot(player) : coffinLoot(run.floorNumber, player)));
       if (which === "a") Common.varbit(player, "hallowed_current_floor_looted", 1);
       if (which === "b") Common.varbit(player, "hallowed_current_floor_looted_b", 1);
       if (grand) Common.varbit(player, "hallowed_final_chest_looted", 1);

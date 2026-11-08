@@ -97,6 +97,7 @@ module.exports = function registerBiohazardQuest(api) {
   const CAULDRON_OBJECT_ID = 37327;
   const MOURNER_FENCE_OBJECT_ID = 2068;
   const MOURNER_HQ_DOOR_ID = 2036;
+  const MOURNER_UPSTAIRS_DOOR_ID = 2034;
   const MOURNER_CAGE_GATE_IDS = new Set([2058, 2060]);
   const MOURNER_CRATE_ID = 2064;
   const BEDROOM_DOOR_CLOSED_ID = 2032;
@@ -190,6 +191,55 @@ module.exports = function registerBiohazardQuest(api) {
   ]);
 
   let quest;
+  // Voidburn: cache-backed visual approximations; exact OSRS scene timing is uncaptured.
+  const travelScenes = new WeakMap();
+  const LADDER_ANIMATION = 828; // human_reachforladder
+  const FENCE_ANIMATION = 3844; // railing_squeeze
+  const FEED_ANIMATION = 385; // human_throw
+  const PIGEON_GRAPHIC = 72; // biopigeon_launch
+
+  function cancelTravel({ player }) {
+    if (!travelScenes.has(player)) return;
+    travelScenes.delete(player);
+    player.getMovementQueue().setBlockMovement(false);
+    player.performAnimation(api.core.Animation.DEFAULT_RESET_ANIMATION);
+  }
+
+  function routeQuestDoor(event) {
+    const at = event.object?.getLocation();
+    if (!at) return;
+    const x = at.getX(), y = at.getY(), z = at.getZ(), from = event.sourceLocation;
+    if (event.objectId === MOURNER_UPSTAIRS_DOOR_ID && x === 2547 && y === 3325 && z === 1) {
+      event.destination = {x:from.x >= 2547 ? 2548 : 2546,y,z};
+    } else if (event.objectId === MOURNER_HQ_DOOR_ID && x === 2551 && [3320,3328].includes(y) && z === 0) {
+      event.destination = {x,y:from.y > y ? y + 1 : y - 1,z};
+    } else if (MOURNER_CAGE_GATE_IDS.has(event.objectId) && x === 2551 && [3325,3326].includes(y) && z === 1) {
+      event.destination = {x:from.x >= 2551 ? 2552 : 2550,y,z};
+    } else if (event.objectId === MOURNER_FENCE_OBJECT_ID && x === 2541 && y === 3331 && z === 0) {
+      event.destination = {x:from.x >= 2542 ? 2542 : 2540,y,z};
+    }
+  }
+
+  function crossObstacle(player, destination, animation, arrive) {
+    const movement = player.getMovementQueue();
+    if (travelScenes.has(player) || movement.isMovementBlocked() || player.isDying || player.getHitpoints() <= 0) return;
+    const token = {}, origin = player.getLocation().clone();
+    travelScenes.set(player, token);
+    movement.reset().setBlockMovement(true);
+    player.performAnimation(new api.core.Animation(animation));
+    api.getTaskManager().submit(new class extends api.core.Task {
+      constructor() { super(1, player, false); this.remaining = 3; }
+      execute() {
+        if (travelScenes.get(player) !== token) { this.stop(); return; }
+        if (!player.isRegistered() || player.isDying || player.getHitpoints() <= 0 || !player.getLocation().equals(origin)) {
+          cancelTravel({ player }); this.stop(); return;
+        }
+        if (--this.remaining > 0) return;
+        try { player.moveTo(destination); arrive?.(); }
+        finally { cancelTravel({ player }); this.stop(); }
+      }
+    }());
+  }
 
   const held = (player, itemId) => player.getInventory().getAmount(itemId) > 0;
   const hasAllVials = (player) =>
@@ -645,12 +695,18 @@ module.exports = function registerBiohazardQuest(api) {
     }
     if (OMART_NPC_IDS.has(npcId) && (stepId === "v1MvBF" || stepId === "3Xl8ZM")) {
       const stage = quest.getStage(player);
-      if (stage === STAGE_RELEASED_PIGEONS) quest.setStage(player, STAGE_CLIMBED_LADDER);
-      player.moveTo(WEST_ARDOUGNE_LANDING);
+      if (stage < STAGE_RELEASED_PIGEONS) return;
+      if (stage === STAGE_RELEASED_PIGEONS && !wearingGasMask(player)) {
+        player.sendMessage("You should put on your gas mask before crossing into West Ardougne.");
+        return;
+      }
+      crossObstacle(player, WEST_ARDOUGNE_LANDING, LADDER_ANIMATION, () => {
+        if (quest.getStage(player) === STAGE_RELEASED_PIGEONS) quest.setStage(player, STAGE_CLIMBED_LADDER);
+      });
       return;
     }
     if (KILRON_NPC_IDS.has(npcId) && stepId === "PIRzeQ") {
-      player.moveTo(EAST_ARDOUGNE_LANDING);
+      if (quest.getStage(player) >= STAGE_CLIMBED_LADDER) crossObstacle(player, EAST_ARDOUGNE_LANDING, LADDER_ANIMATION);
       return;
     }
     if (ELENA_NPC_IDS.has(npcId) && stepId === "Vpxjql") {
@@ -814,6 +870,7 @@ module.exports = function registerBiohazardQuest(api) {
       return true;
     }
     player.getInventory().deleteNumber(BIRD_FEED_ITEM_ID, 1);
+    player.performAnimation(new api.core.Animation(FEED_ANIMATION));
     quest.setStage(player, STAGE_USED_BIRD_FEED);
     player.sendMessage("You throw a handful of seeds onto the watchtower. The mourners do not seem to notice.");
     return true;
@@ -832,6 +889,7 @@ module.exports = function registerBiohazardQuest(api) {
       player.getInventory().adds(PIGEON_CAGE_EMPTY_ITEM_ID, 1);
     }
     quest.setStage(player, STAGE_RELEASED_PIGEONS);
+    player.performGraphic(new api.core.Graphic(PIGEON_GRAPHIC));
     player.sendMessage("The pigeons fly towards the watchtower. The mourners frantically try to scare them away.");
     return true;
   }
@@ -849,7 +907,7 @@ module.exports = function registerBiohazardQuest(api) {
       return true;
     }
     const inside = inMournerYard(player.getLocation?.());
-    player.moveTo(new Location(inside ? 2540 : 2542, 3331, 0));
+    crossObstacle(player, new Location(inside ? 2540 : 2542, 3331, 0), FENCE_ANIMATION);
     return true;
   }
 
@@ -872,9 +930,12 @@ module.exports = function registerBiohazardQuest(api) {
 
   function openMournerDoor(event) {
     const { player, objectId, location } = event;
-    if (objectId !== MOURNER_HQ_DOOR_ID || !location) return false;
+    if (!location) return false;
+    const x = location.getX?.() ?? location.x;
+    const y = location.getY?.() ?? location.y;
     const z = location.getZ?.() ?? location.z;
-    if (z !== 0) return false;
+    const upstairs = objectId === MOURNER_UPSTAIRS_DOOR_ID && x === 2547 && y === 3325 && z === 1;
+    if (!upstairs && !(objectId === MOURNER_HQ_DOOR_ID && x === 2551 && [3320,3328].includes(y) && z === 0)) return false;
     if (quest.getStage(player) < STAGE_POISONED_STEW) {
       event.handled = true;
       player.sendMessage("The mourner guards will not let you in.");
@@ -885,7 +946,17 @@ module.exports = function registerBiohazardQuest(api) {
       player.sendMessage("You need to be wearing a medical gown to enter the Mourner Headquarters.");
       return true;
     }
-    return false;
+    event.handled = true;
+    if (upstairs) {
+      const inside = player.getLocation().getX() >= 2548;
+      crossObstacle(player, new Location(inside ? 2546 : 2548,y,z), LADDER_ANIMATION);
+      return true;
+    }
+    const south = y === 3320;
+    const inside = south ? player.getLocation().getY() >= 3321 : player.getLocation().getY() <= 3327;
+    const destinationY = south ? (inside ? 3319 : 3321) : (inside ? 3329 : 3327);
+    crossObstacle(player, new Location(x,destinationY,0), LADDER_ANIMATION);
+    return true;
   }
 
   function openCageGate(event) {
@@ -901,7 +972,15 @@ module.exports = function registerBiohazardQuest(api) {
       player.sendMessage("The gate is locked. You need a key.");
       return true;
     }
-    return false;
+    const location = event.location;
+    const x = location?.getX?.() ?? location?.x;
+    const y = location?.getY?.() ?? location?.y;
+    const z = location?.getZ?.() ?? location?.z;
+    if (x !== 2551 || ![3325,3326].includes(y) || z !== 1) return false;
+    event.handled = true;
+    const inside = player.getLocation().getX() >= 2552;
+    crossObstacle(player, new Location(inside ? 2550 : 2552,y,1), LADDER_ANIMATION);
+    return true;
   }
 
   function searchMournerCrate(event) {
@@ -978,6 +1057,7 @@ module.exports = function registerBiohazardQuest(api) {
   }
 
   function handleLogin({ player }) {
+    cancelTravel({ player });
     refreshQuestList(player);
     player.getPacketSender().sendVarbit(VARBIT_FREE_CLOTHES, Number(player.getAttribute(FREE_GOWN_ATTRIBUTE)) === 1 ? 1 : 0);
   }
@@ -1042,6 +1122,7 @@ module.exports = function registerBiohazardQuest(api) {
   api.onCustomEvent("npc-dialogue:action", handleAction);
   api.onCustomEvent("door:toggle", handleBiohazardDoorToggle);
   api.onNpcDeath(handleNpcDeath);
+  api.onObjectRoute(routeQuestDoor);
   api.onObjectInteraction("Cupboard", { Open: openCupboard, Search: searchCupboard, Shut: shutCupboard });
   api.onObjectInteraction("Watchtower", { Investigate: investigateWatchtower });
   api.onObjectInteraction("Fence", { "Squeeze-through": squeezeFence });
@@ -1054,4 +1135,6 @@ module.exports = function registerBiohazardQuest(api) {
   api.onZoneEnter(VARROCK_SOUTH_EAST_ZONE, handleVarrockEnter);
   api.onZoneExit(VARROCK_SOUTH_EAST_ZONE, handleVarrockExit);
   api.onPlayerLogin(handleLogin);
+  api.onPlayerLogout(cancelTravel);
+  api.onPlayerDeath(cancelTravel);
 };

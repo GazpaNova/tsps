@@ -231,9 +231,9 @@ test('a funeral pyre: logs, then remains, then Light; the fire, the experience, 
   // Wiki "Cremating shade remains": Loar remains on magic pyre logs give 35 Prayer experience (not the flat 25).
   assert.deepEqual(p.xp, [['Prayer', 35], ['Firemaking', 404.5]]);
   ticks(2 + 4 + 1);
-  const names = hooks.events.emitted.map(([name]) => name);
+  const names = hooks.events.emitted.map(([name]) => name).filter(name => name.startsWith('shades-of-mortton:'));
   assert.deepEqual(names, ['shades-of-mortton:pyre-logs', 'shades-of-mortton:cremated'], 'the quest hears of both');
-  const reward = hooks.events.emitted[1][1].reward;
+  const reward = hooks.events.emitted.find(([name]) => name === 'shades-of-mortton:cremated')[1].reward;
   assert.ok(reward.id === 995 || Common.keyOf(reward.id)?.metal === 'bronze', 'Loar remains give coins or a bronze key');
 });
 

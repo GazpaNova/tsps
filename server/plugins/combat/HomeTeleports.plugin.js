@@ -3,14 +3,17 @@
 /**
  * Home teleports (https://oldschool.runescape.wiki/w/Home_Teleport): the standard, Ancient, Lunar
  * and Arceuus spellbooks' free teleport home. It plays the long home teleport cast
- * (HomeTeleportSequence) and has one 30-minute cooldown shared by all four, kept as the minute
- * of the last one (varp 892, as OSRS sends varp 888 for the minigame teleports).
+ * (HomeTeleportSequence) and has one cooldown shared by all four, kept as the minute of the last
+ * one (varp 892, as OSRS sends varp 888 for the minigame teleports).
+ * Revenant custom: the cooldown is 5 minutes instead of OSRS's 30.
  */
 
 const { CacheDefinitions } = require("../../src/main/typescript/elvarg/game/cache/CacheDefinitions");
 const { startHomeTeleport, dateMinutes, TOGGLES_ATTRIBUTE } = require("./HomeTeleportSequence");
 
-const COOLDOWN_MINUTES = 30;
+const COOLDOWN_MINUTES = 5;
+/** The client counts OSRS's 30 minutes from varp 892, so it gets the minute moved up to count down ours. */
+const CLIENT_COOLDOWN_MINUTES = 30;
 const LAST_HOME_TELEPORT_VARP = 892;
 const LAST_HOME_TELEPORT_ATTRIBUTE = "home-teleport:last-minute";
 // Cache: animation_picker, CS2 7707/1196/1197, home_tele_anim_toggle_list.
@@ -63,6 +66,11 @@ function destinationFor(home) {
   return new core.Location(home.x + dx, home.y + dy, 0);
 }
 
+/** The minute to send in varp 892 for a home teleport cast at `minute`. */
+function clientMinute(minute) {
+  return minute - (CLIENT_COOLDOWN_MINUTES - COOLDOWN_MINUTES);
+}
+
 /** Minutes left of the cooldown that started at `lastMinute`; 0 when it has passed. */
 function minutesLeft(lastMinute, cooldown, now = dateMinutes()) {
   if (!Number.isFinite(lastMinute) || lastMinute <= 0) return 0;
@@ -103,7 +111,7 @@ function castHomeTeleport(event) {
   startHomeTeleport(core, player, destination, () => {
     const minute = dateMinutes();
     player.setAttribute(LAST_HOME_TELEPORT_ATTRIBUTE, minute);
-    player.getPacketSender().sendConfig(LAST_HOME_TELEPORT_VARP, minute);
+    player.getPacketSender().sendConfig(LAST_HOME_TELEPORT_VARP, clientMinute(minute));
   });
 }
 
@@ -155,7 +163,7 @@ function toggleAnimation(event) {
 }
 
 function sendLastHomeTeleport({ player }) {
-  const minute = Number(player.getAttribute(LAST_HOME_TELEPORT_ATTRIBUTE) ?? 0);
+  const minute = clientMinute(Number(player.getAttribute(LAST_HOME_TELEPORT_ATTRIBUTE) ?? 0));
   if (minute > 0) player.getPacketSender().sendConfig(LAST_HOME_TELEPORT_VARP, minute);
   player.getPacketSender().sendConfig(HOME_ANIMATION_TOGGLES_VARP, toggles(player));
   for (const scroll of SCROLLS) {
@@ -179,4 +187,4 @@ module.exports = {
   },
 };
 
-module.exports._test = { castHomeTeleport, minutesLeft, HOMES, LAST_HOME_TELEPORT_ATTRIBUTE };
+module.exports._test = { castHomeTeleport, minutesLeft, clientMinute, sendLastHomeTeleport, HOMES, LAST_HOME_TELEPORT_ATTRIBUTE };

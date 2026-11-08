@@ -1,3 +1,5 @@
+import { FriendsOnlinePlugin } from "../../../game/plugins/friendsonline/FriendsOnlinePlugin";
+import { DropAllPlugin } from "../../../game/plugins/dropall/DropAllPlugin";
 import { CharactersPlugin } from "../../../game/plugins/characters/CharactersPlugin";
 import { AnimationSmoothingConfig } from "../../../game/plugins/animationsmoothing/AnimationSmoothingConfig";
 import { BugReportPlugin } from "../../../game/plugins/bugreport/BugReportPlugin";
@@ -75,6 +77,7 @@ import type { PluginClass } from "./Plugin";
 /** Static core plugin list (RuneLite's `PluginManager.loadCorePlugins`). */
 export const CORE_PLUGINS: ReadonlyArray<PluginClass> = [
     ConfigPlugin,
+    FriendsOnlinePlugin,
     VoiceChatPlugin,
     HdPlugin,
     FirstPersonPlugin,
@@ -93,6 +96,7 @@ export const CORE_PLUGINS: ReadonlyArray<PluginClass> = [
     MenuSwapperPlugin,
     // After Menu Swapper: its "Inventory tag" submenu joins the swapped menu.
     InventoryTagsPlugin,
+    DropAllPlugin,
     ItemStatsPlugin,
     ItemPricesPlugin,
     ItemRarityPlugin,

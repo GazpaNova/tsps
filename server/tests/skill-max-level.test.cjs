@@ -1327,11 +1327,11 @@ test("native autocast indicators clear on staff removal while remembering the de
     let staff = true, selected = null, fightType = null;
     const varbits = new Map();
     const sender = new Proxy({ sendVarbit(id, n) { varbits.set(id, n); return sender; } }, { get: (t, key) => t[key] ?? (() => sender) });
-    const p = { getCombat: () => ({ getAutocastSpell: () => selected, setAutocastSpell: s => { selected = s; } }),
+    const attributes = new Map();
+    const p = { getAttribute: key => attributes.get(key), setAttribute: (key, value) => attributes.set(key, value), getCombat: () => ({ getAutocastSpell: () => selected, setAutocastSpell: s => { selected = s; } }),
       getEquipment: () => ({ hasStaffEquipped: () => staff, getWeapon: () => new Item(staff ? ItemIdentifiers.STAFF_OF_AIR : -1, 1), getItems: () => new Array(14).fill(new Item(-1, 0)) }),
       getPacketSender: () => sender, getFightType: () => fightType, setFightType: type => { fightType = type; },
-      setWeapon(weapon) { this.weapon = weapon; }, getWeapon() { return this.weapon; }, autoRetaliateReturn: () => false, sendMessage() {},
-      attrs: new Map(), getAttribute(key) { return this.attrs.get(key); }, setAttribute(key, value) { this.attrs.set(key, value); } };
+      setWeapon(weapon) { this.weapon = weapon; }, getWeapon() { return this.weapon; }, autoRetaliateReturn: () => false, sendMessage() {} };
     Autocasting.setAutocast(p, CombatSpells.WIND_STRIKE);
     assert.equal(varbits.get(275), 1); assert.equal(varbits.get(276), 1);
     staff = false; WeaponInterfaceManager.assign(p);
@@ -1360,7 +1360,8 @@ test("choosing a style while autocasting turns autocast off, and autocast shows 
       sendVarbit(id, n) { varbits.set(id, n); return sender; },
       sendConfig(id, n) { varps.set(id, n); return sender; },
     }, { get: (t, key) => t[key] ?? (() => sender) });
-    const p = { getCombat: () => ({ getAutocastSpell: () => selected, setAutocastSpell: s => { selected = s; } }),
+    const attributes = new Map();
+    const p = { getAttribute: key => attributes.get(key), setAttribute: (key, value) => attributes.set(key, value), getCombat: () => ({ getAutocastSpell: () => selected, setAutocastSpell: s => { selected = s; } }),
       getEquipment: () => ({ hasStaffEquipped: () => true, getWeapon: () => new Item(ItemIdentifiers.STAFF_OF_AIR, 1) }),
       getWeapon: () => WeaponInterfaces.STAFF,
       getPacketSender: () => sender, getFightType: () => fightType, setFightType: type => { fightType = type; },
@@ -1597,4 +1598,62 @@ test("overworld implings spawn on the Wiki's 30-minute cycle, show after two min
   Overworld.process();
   assert.equal(removed.length, others + 1, "the next cycle despawns the old implings and spawns new ones");
   Overworld.clear();
+});
+
+test("Revenant skill rates award the requested XP for all 24 skills", () => {
+  const { PluginManager } = require("../dist/plugins/PluginManager");
+  const { GameConstants } = require("../dist/game/GameConstants");
+  const plugin = require("../plugins/world/RevenantSkillRates.plugin");
+  const expected = {
+    Attack: 1, Defence: 1, Strength: 1, Hitpoints: 1, Ranged: 1,
+    Prayer: 2, Magic: 1, Cooking: 2, Slayer: 2,
+    Agility: 4, Mining: 4, Woodcutting: 3, Runecrafting: 4,
+    Smithing: 3, Fletching: 3, Crafting: 3, Construction: 3,
+    Thieving: 3, Fishing: 3, Herblore: 3, Farming: 3, Hunter: 3,
+    Sailing: 2, Firemaking: 3,
+  };
+  const hooks = PluginManager.canGainExperienceHooks;
+  const originalRate = GameConstants.EXPERIENCE_MULTIPLIER;
+  PluginManager.canGainExperienceHooks = [];
+  try {
+    assert.equal(originalRate, 1, "world base must remain 1x");
+    plugin.register(PluginManager.createApi(plugin.name));
+    assert.equal(Skill.values().length, Object.keys(expected).length);
+    for (const skill of Skill.values()) {
+      const drops = [];
+      const sender = new Proxy({}, { get: (_, name) => name === "sendExpDrop"
+        ? (_skill, amount) => { drops.push(amount); return sender; }
+        : name === "then" ? undefined : () => sender });
+      const xp = new SkillManager({ getPacketSender: () => sender, getAttribute: () => undefined });
+      const index = skill.getIndex();
+      const before = xp.skills.experience[index];
+      xp.addExperiences(skill, 2.5);
+      assert.equal(xp.skills.experience[index] - before, 2.5 * expected[skill.getName()], skill.getName());
+      assert.deepEqual(drops, [2.5 * expected[skill.getName()]], `${skill.getName()} XP drop`);
+    }
+  } finally {
+    PluginManager.canGainExperienceHooks = hooks;
+    GameConstants.EXPERIENCE_MULTIPLIER = originalRate;
+  }
+});
+
+test("Revenant skill rates preserve explicit multiplier bypass and XP locks", () => {
+  const { PluginManager } = require("../dist/plugins/PluginManager");
+  const plugin = require("../plugins/world/RevenantSkillRates.plugin");
+  const hooks = PluginManager.canGainExperienceHooks;
+  PluginManager.canGainExperienceHooks = [];
+  try {
+    plugin.register(PluginManager.createApi(plugin.name));
+    const xp = new SkillManager({ getPacketSender: () => sender, getAttribute: () => undefined });
+    xp.addExperience(Skill.MINING, 2.5, false);
+    assert.equal(xp.skills.experience[Skill.MINING.getIndex()], 2.5);
+    const locked = new SkillManager({ getPacketSender: () => sender, getAttribute: key => key === SkillManager.XP_LOCKED_ATTRIBUTE });
+    locked.addExperiences(Skill.MINING, 2.5);
+    assert.equal(locked.getExperience(Skill.MINING), 0);
+    PluginManager.canGainExperienceHooks.push({ pluginName: "TestXpBlock", handler(event) { event.allow = false; } });
+    xp.addExperiences(Skill.MINING, 2.5);
+    assert.equal(xp.skills.experience[Skill.MINING.getIndex()], 2.5);
+  } finally {
+    PluginManager.canGainExperienceHooks = hooks;
+  }
 });

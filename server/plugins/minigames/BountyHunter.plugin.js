@@ -10,7 +10,7 @@ module.exports = {
   members: true,
   // Points re-registers the "BOUNTY HUNTER POINTS" shop currency on varp bh_2023_points;
   // the bots are the PlayerBots runtime's PvP bots.
-  dependsOn: ["Shopkeepers", "PlayerBots"],
+  dependsOn: ["Shopkeepers"],
   register(api) {
     const bh = require("./bountyhunter/State.BountyHunter");
     require("./bountyhunter/Hud.BountyHunter")(api, bh);
@@ -29,6 +29,6 @@ module.exports = {
     require("./bountyhunter/EmblemTrader.BountyHunter")(api, bh);
     require("./bountyhunter/CorruptedWarrior.BountyHunter")(api, bh);
     require("./bountyhunter/Loadouts.BountyHunter")(api, bh);
-    require("./bountyhunter/Bots.BountyHunter")(api, bh);
+    if (process.env.DISABLE_PLAYER_BOTS !== "1") require("./bountyhunter/Bots.BountyHunter")(api, bh);
   },
 };

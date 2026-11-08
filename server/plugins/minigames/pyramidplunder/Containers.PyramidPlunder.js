@@ -214,7 +214,7 @@ function openChest(player, run, random) {
 
 /** The sceptre roll comes first: finding it ends the run, then the artefact follows outside. */
 function loot(player, run, artefact, random) {
-  if (Common.rollSceptre(run.room, random)) Common.awardSceptre(player);
+  if (Common.rollSceptre(run.room, random, player)) Common.awardSceptre(player);
   Common.giveArtefact(player, artefact);
 }
 

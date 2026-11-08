@@ -138,11 +138,12 @@ function give(player, reward) {
     Shared.api().emitCustomEvent("npc-drops:roll", event);
     if (event.drops.length === 0) return true;
   }
+  // RuneLite snapshots the inventory on this message, before the reward update.
+  Shared.spam(player, `You found some loot: ${reward.amount} x ${itemName(itemId)}`);
   player.getInventory().adds(itemId, reward.amount);
   player.getInventory().refreshItems();
   if (reward.once && ONCE_VARBITS[reward.item]) Records.setSetting(player, ONCE_VARBITS[reward.item], 1);
   Shared.api().emitCustomEvent("collection-log:obtain", { player, itemId, amount: reward.amount });
-  Shared.spam(player, `You found some loot: ${reward.amount} x ${itemName(itemId)}`);
   return true;
 }
 

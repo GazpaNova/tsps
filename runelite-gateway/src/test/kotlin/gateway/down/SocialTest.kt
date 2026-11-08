@@ -3,6 +3,7 @@ package gateway.down
 import gateway.tsps.TspsPacket
 import gateway.tsps.TspsServerPacket
 import gateway.tsps.TspsWriter
+import net.rsprot.protocol.game.outgoing.friendchat.MessageFriendChannel
 import net.rsprot.protocol.game.outgoing.social.UpdateFriendList
 import net.rsprot.protocol.game.outgoing.social.UpdateIgnoreList
 import net.rsprot.protocol.message.OutgoingGameMessage
@@ -13,6 +14,18 @@ import org.junit.jupiter.api.Test
 class SocialTest {
     private val sent = ArrayList<OutgoingGameMessage>()
     private val social = Social { sent += it }
+
+    @Test
+    fun `friends chat IDs continue across gateway sessions`() {
+        val reconnect = Social { sent += it }
+        val line = TspsChatMessage("hello", 9, "Tester", "Voidburn", 1)
+        social.chat(line)
+        reconnect.chat(line)
+
+        val (first, second) = sent.filterIsInstance<MessageFriendChannel>()
+        assertEquals(first.worldId, second.worldId)
+        assertEquals((first.worldMessageCounter + 1) and 0xFFFFFF, second.worldMessageCounter)
+    }
 
     /** A snapshot with no chat-channel; each entry is (name, previous name, online). */
     private fun snapshot(friends: List<Triple<String, String, Boolean>>, ignores: List<Pair<String, String>> = emptyList()) {

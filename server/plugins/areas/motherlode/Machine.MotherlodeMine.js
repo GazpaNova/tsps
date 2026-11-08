@@ -110,7 +110,7 @@ function repairStrut(strut, now) {
   strut.foamLoc = loc(WATERFALL_FOAM, strut.foam, CENTREPIECE, 1);
   ObjectManager.register(strut.foamLoc, true);
   strut.broken = false;
-  strut.breaksAt = now + STRUT_ROUND_TICKS * random(STRUT_ROUNDS);
+  strut.breaksAt = -1; // Voidburn: repaired wheels never schedule a breakdown.
 }
 
 function breakStrut(strut) {
@@ -245,7 +245,7 @@ function clean(player, batch) {
     xp += Mine.ORE_BY_KEY.get(key).xp;
   }
   Mine.save(player, state);
-  if (xp > 0) player.getSkillManager().addExperiences(Skill.MINING, xp);
+  if (xp > 0) player.getSkillManager().addExperiences(Skill.MINING, xp * 1.25); // Voidburn: +25% cleaning XP.
   Mine.syncVarbits(player);
   player.getPacketSender().sendSound(CLEANED_SOUND, 0, 30);
   player.sendMessage(Mine.sackTotal(state) >= Mine.capacity(state)
@@ -302,7 +302,16 @@ function searchSack({ player, objectId }) {
       ? (nuggetsStack || inventory.getFreeSlots() > 0 ? stored : 0)
       : Math.min(stored, inventory.getFreeSlots());
     if (!take) continue;
-    if (ore.item === Mine.GOLDEN_NUGGET) inventory.add(new Item(ore.item, take), true);
+    if (ore.item === Mine.GOLDEN_NUGGET) {
+      const award = { player, minigame: "motherlode-mine", points: take };
+      pluginApi.emitCustomEvent?.("minigame:points", award);
+      const reward = new Item(ore.item, award.points);
+      if (inventory.getAddableAmount && inventory.getAddableAmount(reward) < award.points) {
+        player.sendMessage("You don't have enough inventory space.");
+        continue;
+      }
+      inventory.add(reward, true);
+    }
     else for (let i = 0; i < take; i++) inventory.add(new Item(ore.item, 1), true);
     state.sack[ore.key] = stored - take;
     collected += take;
@@ -348,7 +357,7 @@ function tick(now) {
     showWater();
   }
   for (const strut of struts) {
-    if (!strut.broken && now >= strut.breaksAt) breakStrut(strut);
+    if (!strut.broken && strut.breaksAt >= 0 && now >= strut.breaksAt) breakStrut(strut);
   }
   const lines = percyLines(now);
   if (lines) percySays(lines);

@@ -23,6 +23,9 @@ before(async () => {
   await CachePipeline.initialize(path.resolve(__dirname, ".."));
   GameConstants.setWorldProfile("league");
   PM.loadFromDirectory(path.resolve(__dirname, "../plugins"));
+  // Isolate vanilla league-stock semantics from Voidburn's world-wide static stock policy.
+  const stockPolicies = PM.customEventHooks.get("shop:stock-policy") ?? [];
+  PM.customEventHooks.set("shop:stock-policy", stockPolicies.filter(h => h.pluginName !== "StaticShopStock"));
   core = PM.getCoreApi();
   core.RegionManager.init();
   PM.emitServerStartup({});

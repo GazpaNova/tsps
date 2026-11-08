@@ -9,8 +9,8 @@
  *
  * Sources: OSRS Wiki Plague City/Quick guide and Transcript:Plague City;
  * locs and varbits verified against the revision 241 cache.
- * Warrant house entry, tunnel digging/travel, the Edmond pull scene and sewer/manhole return travel
- * still need native movement/scene evidence; these handlers do not simulate them.
+ * Voidburn adds the remaining travel using cache-verified resources and map-tested
+ * landings. Scene delays are practical approximations, not verified OSRS captures.
  *
  * Stages (varp 165): 1 find dwellberries, 2 gas mask, 3 soften the mud, 4-7
  * one to four buckets of water, 8 tunnel open, 9 rope tied, 10 pipe open,
@@ -86,6 +86,19 @@ module.exports = function registerPlagueCityQuest(api) {
   const VARBIT_DUG_HOLE = 1785;
   const VARBIT_CHECKED_GRILL = 1786;
   const VARBIT_PIPE = 1787;
+  const VARBIT_EDMOND_UNDERGROUND = 1783;
+  const MUD_PILE_ID = 2533;
+  const PIPE_ID = 2542;
+  const MANHOLE_CLOSED_ID = 2543;
+  const MANHOLE_OPEN_ID = 2544;
+  const HOUSE_STAIRS_DOWN_ID = 2522;
+  const HOUSE_STAIRS_UP_ID = 2523;
+  const SCENE_ANIM = { dig: 830, climb: 828, down: 827, pipe: 3195, pull: 3192 };
+  const GARDEN_LANDING = [2566, 3333, 0];
+  const TUNNEL_LANDING = [2518, 9758, 0];
+  const PIPE_LANDING = [2529, 3304, 0];
+  const MANHOLE_LANDING = [2514, 9740, 0];
+  const scenes = new WeakMap();
 
   const pendingDoors = new WeakMap();
 
@@ -316,7 +329,9 @@ module.exports = function registerPlagueCityQuest(api) {
       quest.setStage(player, STAGE_GAS_MASK);
     }
     if (ALRENA_NPC_IDS.has(npcId) && stepId === "jG6mG3" && stage >= STAGE_GAS_MASK && !held(player, GAS_MASK_ITEM_ID) && !wearingGasMask(player) && inventory.getFreeSlots() > 0) inventory.adds(GAS_MASK_ITEM_ID, 1);
-    if (npcId === EDMOND_NPC_ID && stepId === "oCU2uO" && stage === STAGE_ROPE_TIED) quest.setStage(player, STAGE_PIPE_OPEN);
+    if (npcId === EDMOND_NPC_ID && stepId === "oCU2uO" && stage === STAGE_ROPE_TIED) {
+      eventPullGrill(player);
+    }
     if (npcId === TED_REHNISON_NPC_ID && stepId === "zQse1w" && stage === STAGE_SHOWN_PICTURE && held(player, ItemIdentifiers.BOOK_2)) {
       inventory.deleteNumber(ItemIdentifiers.BOOK_2, 1);
       quest.setStage(player, STAGE_RETURNED_BOOK);
@@ -355,6 +370,13 @@ module.exports = function registerPlagueCityQuest(api) {
   function handleDoor(event) {
     const { player, object, objectId, location } = event;
     const stage = quest.getStage(player);
+    if (enterWarrantHouse(event)) return;
+    if (objectId === ObjectIdentifiers.DOOR_80 && location.x === 2530 && location.y === 3314 && location.z === 0 && stage >= STAGE_CLERK_PERMISSION) {
+      event.handled = true;
+      const leaving = player.getLocation().getX() >= 2531;
+      scene(player, SCENE_ANIM.climb, 2, () => move(player, [leaving ? 2529 : 2531,3314,0]));
+      return;
+    }
     if (objectId === ObjectIdentifiers.DOOR_80 && location.x === 2530 && location.y === 3314 && location.z === 0 && stage < STAGE_CLERK_PERMISSION) {
       event.handled = true;
       startTranscript(api, player, NpcIdentifiers.BRAVEK, "Plague City", "finding-elena-attempting-to-open-the-door-to-bravek-before-the-clerk-lets-you-in");
@@ -382,6 +404,9 @@ module.exports = function registerPlagueCityQuest(api) {
       if (stage >= STAGE_HAVE_WARRANT && (player.getAttribute(CELL_UNLOCKED_ATTRIBUTE) || held(player, ItemIdentifiers.A_SMALL_KEY))) {
         if (!player.getAttribute(CELL_UNLOCKED_ATTRIBUTE)) player.sendMessage("You unlock the door.");
         player.setAttribute(CELL_UNLOCKED_ATTRIBUTE, true);
+        event.handled = true;
+        const leaving = player.getLocation().getX() >= 2540;
+        scene(player, SCENE_ANIM.climb, 2, () => move(player, [leaving ? 2538 : 2540,9672,0]));
       } else {
         event.handled = true;
         startTranscript(api, player, NpcIdentifiers.ELENA_2, "Plague City", "freeing-elena-attempting-to-open-the-basement-door-of-the-plague-house-without-the-key");
@@ -432,6 +457,11 @@ module.exports = function registerPlagueCityQuest(api) {
 
   function handleItemOnObject(event) {
     const { player, objectId, itemId, location } = event;
+    if (itemId === ItemIdentifiers.SPADE && isGardenMud(event)) {
+      event.handled = true;
+      digGarden(player);
+      return;
+    }
     if (itemId === ItemIdentifiers.BUCKET_OF_WATER && [MUD_MULTILOC_ID, ObjectIdentifiers.MUD_PATCH_2, ObjectIdentifiers.MUD_PATCH_3].includes(objectId) && location.x === 2566 && location.y >= 3331 && location.y <= 3333 && location.z === 0) {
       event.handled = true;
       const stage = quest.getStage(player);
@@ -505,14 +535,177 @@ module.exports = function registerPlagueCityQuest(api) {
     if (key !== undefined && key !== "plague_city") return;
     const stage = quest.getStage(player);
     const sender = player.getPacketSender();
+    sender.sendVarbit(VARBIT_EDMOND_UNDERGROUND, stage >= STAGE_TUNNEL_OPEN && stage < STAGE_FREED_ELENA ? 1 : 0);
     sender.sendVarbit(VARBIT_DUG_HOLE, stage >= STAGE_TUNNEL_OPEN ? 1 : 0);
     sender.sendVarbit(VARBIT_CHECKED_GRILL, player.getAttribute(GRILL_CHECKED_ATTRIBUTE) ? 1 : 0);
     sender.sendVarbit(VARBIT_PIPE, stage >= STAGE_PIPE_OPEN ? 2 : stage >= STAGE_ROPE_TIED ? 1 : 0);
   }
 
   function handleLogin({ player }) {
+    cancelScene({ player });
     syncObjects({ player });
     refreshQuestList(player);
+  }
+
+  // Local scene state is never persisted: a disconnect keeps the old location
+  // and stage, so repeating the interaction is safe after logging back in.
+  function cancelScene({ player }) {
+    const scene = scenes.get(player);
+    if (!scene) return;
+    scenes.delete(player);
+    player.getMovementQueue().setBlockMovement(false);
+    player.performAnimation(api.core.Animation.DEFAULT_RESET_ANIMATION);
+  }
+
+  function routeQuestDoor(event) {
+    const at = event.object?.getLocation();
+    if (!at) return;
+    const x = at.getX(), y = at.getY(), z = at.getZ(), from = event.sourceLocation;
+    if (event.objectId === ObjectIdentifiers.DOOR_80 && x === 2530 && y === 3314 && z === 0) {
+      event.destination = {x:from.x >= 2531 ? 2531 : 2529,y,z};
+    } else if (event.objectId === ObjectIdentifiers.DOOR_78 && x === 2539 && y === 9672 && z === 0) {
+      event.destination = {x:from.x >= 2540 ? 2540 : 2538,y,z};
+    } else if (event.objectId === HOUSE_DOOR_MULTILOC_ID && x === 2540 && y === 3273 && z === 0) {
+      event.destination = {x,y:from.y <= 3272 ? 3272 : 3274,z};
+    } else if (event.objectId === HOUSE_DOOR_MULTILOC_ID && x === 2533 && y === 3272 && z === 0) {
+      event.destination = {x:from.x >= 2534 ? 2534 : 2532,y,z};
+    }
+  }
+
+  function scene(player, animation, ticks, finish) {
+    const movement = player.getMovementQueue();
+    if (scenes.has(player) || movement.isMovementBlocked() || player.isDying || player.getHitpoints() <= 0) return false;
+    const token = {};
+    const start = player.getLocation().clone();
+    scenes.set(player, token);
+    movement.reset().setBlockMovement(true);
+    player.performAnimation(new api.core.Animation(animation));
+    api.getTaskManager().submit(new class extends api.core.Task {
+      constructor() { super(1, player, false); this.remaining = ticks; }
+      execute() {
+        if (scenes.get(player) !== token) { this.stop(); return; }
+        if (!player.isRegistered() || player.isDying || player.getHitpoints() <= 0 || !player.getLocation().equals(start)) {
+          cancelScene({ player }); this.stop(); return;
+        }
+        if (--this.remaining > 0) return;
+        try { finish(); } finally { cancelScene({ player }); this.stop(); }
+      }
+    }());
+    return true;
+  }
+
+  function move(player, tile) {
+    player.moveTo(new api.core.Location(...tile));
+  }
+
+  function isGardenMud(event) {
+    const at = event.location ?? event.object?.getLocation();
+    const x = at?.getX?.() ?? at?.x, y = at?.getY?.() ?? at?.y, z = at?.getZ?.() ?? at?.z;
+    return x === 2566 && y >= 3331 && y <= 3333 && z === 0
+      && [MUD_MULTILOC_ID, ObjectIdentifiers.MUD_PATCH_2, ObjectIdentifiers.MUD_PATCH_3].includes(event.objectId);
+  }
+
+  function digGarden(player) {
+    const at = player.getLocation();
+    if (at.getZ() !== 0 || at.getX() < 2564 || at.getX() > 2568 || at.getY() < 3330 || at.getY() > 3334) return false;
+    if (!held(player, ItemIdentifiers.SPADE)) return false;
+    const stage = quest.getStage(player);
+    if (stage < STAGE_WATER_4) {
+      player.sendMessage("The soil is too hard to dig. It needs more water.");
+      return true;
+    }
+    if (stage >= STAGE_TUNNEL_OPEN) return climbGarden({ player, objectId: MUD_MULTILOC_ID, location: { x:2566, y:3332, z:0 } });
+    scene(player, SCENE_ANIM.dig, 3, () => {
+      if (quest.getStage(player) !== STAGE_WATER_4) return;
+      quest.setStage(player, STAGE_TUNNEL_OPEN);
+      player.sendMessage("You dig deep into the soft soil... Suddenly it crumbles away! You fall through into the sewer. Edmond follows you down the hole.");
+      move(player, TUNNEL_LANDING);
+    });
+    return true;
+  }
+
+  function spadeDig(event) {
+    if (!digGarden(event.player)) return false;
+    event.handled = true;
+    return true;
+  }
+
+  function climbGarden(event) {
+    if (!isGardenMud(event)) return false;
+    event.handled = true;
+    if (quest.getStage(event.player) >= STAGE_TUNNEL_OPEN) {
+      scene(event.player, SCENE_ANIM.down, 2, () => move(event.player, TUNNEL_LANDING));
+    }
+    return true;
+  }
+
+  function eventPullGrill(player) {
+    const at = player.getLocation();
+    if (at.getZ() !== 0 || at.getX() < 2506 || at.getX() > 2532 || at.getY() < 9737 || at.getY() > 9781) return;
+    scene(player, SCENE_ANIM.pull, 3, () => {
+      if (quest.getStage(player) === STAGE_ROPE_TIED) {
+        quest.setStage(player, STAGE_PIPE_OPEN);
+        player.sendMessage("Together, you and Edmond pull the grill away from the pipe.");
+      }
+    });
+  }
+
+  function climbPipe(event) {
+    const { player, objectId, location } = event;
+    if (objectId !== PIPE_ID || location.x !== 2514 || location.y < 9737 || location.y > 9738 || location.z !== 0) return false;
+    event.handled = true;
+    if (quest.getStage(player) < STAGE_PIPE_OPEN) { player.sendMessage("The grill is still blocking the pipe."); return true; }
+    if (!wearingGasMask(player)) { player.sendMessage("You need to wear your gas mask before entering West Ardougne."); return true; }
+    scene(player, SCENE_ANIM.pipe, 3, () => move(player, PIPE_LANDING));
+    return true;
+  }
+
+  function climbMudPile(event) {
+    const { player, location } = event;
+    if (event.objectId !== MUD_PILE_ID || location.x !== 2519 || ![9759,9760].includes(location.y) || location.z !== 0) return false;
+    event.handled = true;
+    if (quest.getStage(player) >= STAGE_TUNNEL_OPEN) scene(player, SCENE_ANIM.climb, 2, () => move(player, GARDEN_LANDING));
+    return true;
+  }
+
+  function useManhole(event) {
+    const { player, object, location } = event;
+    if (![MANHOLE_CLOSED_ID, MANHOLE_OPEN_ID].includes(event.objectId) || location.x !== 2529 || location.y !== 3303 || location.z !== 0) return false;
+    event.handled = true;
+    if (quest.getStage(player) < STAGE_PIPE_OPEN) { player.sendMessage("You have no reason to enter these sewers yet."); return true; }
+    if (event.objectId === MANHOLE_CLOSED_ID) {
+      api.core.ObjectManager.deregister(object, true);
+      api.core.ObjectManager.register(new api.core.GameObject(MANHOLE_OPEN_ID, object.getLocation().clone(), object.getType(), object.getFace()), true);
+      player.sendMessage("You open the manhole cover.");
+    } else scene(player, SCENE_ANIM.down, 2, () => move(player, MANHOLE_LANDING));
+    return true;
+  }
+
+  function enterWarrantHouse(event) {
+    const { player, objectId, location } = event;
+    if (objectId !== HOUSE_DOOR_MULTILOC_ID || location.z !== 0 || !((location.x === 2540 && location.y === 3273) || (location.x === 2533 && location.y === 3272))) return false;
+    const at = player.getLocation(), west = location.x === 2533;
+    const leaving = west ? at.getX() >= 2534 : at.getY() <= 3272;
+    if (!leaving && quest.getStage(player) < STAGE_HAVE_WARRANT) return false;
+    event.handled = true;
+    if (!leaving && quest.getStage(player) < STAGE_FREED_ELENA && !held(player, WARRANT_ITEM_ID)) {
+      player.sendMessage("You need Bravek's warrant to get past the mourner."); return true;
+    }
+    const to = west ? [leaving ? 2532 : 2534,3272,0] : [2540,leaving ? 3274 : 3272,0];
+    // Cross only this player. Never replace the shared door's per-player morph.
+    scene(player, SCENE_ANIM.climb, 2, () => move(player, to));
+    return true;
+  }
+
+  function houseStairs(event) {
+    const { player, location, objectId } = event;
+    const down = objectId === HOUSE_STAIRS_DOWN_ID && location.x === 2536 && location.y === 3268;
+    const up = objectId === HOUSE_STAIRS_UP_ID && location.x === 2536 && location.y === 9671;
+    if (location.z !== 0 || (!down && !up)) return false;
+    event.handled = true;
+    if (down && quest.getStage(player) < STAGE_HAVE_WARRANT) return true;
+    scene(player, down ? SCENE_ANIM.down : SCENE_ANIM.climb, 2, () => move(player, down ? [2537,9670,0] : [2538,3269,0]));
+    return true;
   }
 
   /**
@@ -557,7 +750,13 @@ module.exports = function registerPlagueCityQuest(api) {
   api.persistAttribute(CURE_GIVEN_ATTRIBUTE, false);
   api.onCustomEvent("quest:stage-changed", syncObjects);
   api.onCustomEvent("door:toggle", handleDoor);
+  api.onObjectRoute(routeQuestDoor);
   api.onObjectInteraction("Grill", { Open: openGrill });
+  api.onObjectInteraction("Dug hole", { "Climb-down": climbGarden });
+  api.onObjectInteraction("Pipe", { "Climb-up": climbPipe });
+  api.onObjectInteraction("Mud pile", { Climb: climbMudPile });
+  api.onObjectInteraction("Manhole", { Open: useManhole, "Climb-down": useManhole });
+  api.onObjectInteraction("Spooky stairs", { "Walk-down": houseStairs, "Walk-up": houseStairs });
   api.onObjectInteraction("Cupboard", { Open: cupboard, Close: cupboard, Search: cupboard });
   api.onObjectInteraction("Barrel", { Search: searchBarrel });
   api.onItemOnObject(handleItemOnObject);
@@ -569,5 +768,8 @@ module.exports = function registerPlagueCityQuest(api) {
   api.onCustomEvent("npc-dialogue:line", handleLine);
   api.onItemOnItem(handleItemOnItem);
   api.onItemAction("Ardougne teleport scroll", { Read: readScroll });
+  api.onItemAction("Spade", { Dig: spadeDig });
   api.onPlayerLogin(handleLogin);
+  api.onPlayerLogout(cancelScene);
+  api.onPlayerDeath(cancelScene);
 };

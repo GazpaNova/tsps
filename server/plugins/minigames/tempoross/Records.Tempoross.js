@@ -41,6 +41,9 @@ function setPermits(player, amount) {
 }
 
 function addPermits(player, earned) {
+  const award = { player, minigame: "tempoross", points: earned };
+  Shared.api().emitCustomEvent("minigame:points", award);
+  earned = award.points;
   setPermits(player, permits(player) + earned);
   player.setAttribute(TOTAL_PERMITS_ATTRIBUTE, totalPermits(player) + earned);
 }

@@ -37,13 +37,19 @@ function eligibleRewards(npcName) {
   return DATA.rewards.filter((entry) => !entry.only || entry.only.includes(npcName));
 }
 
-function rollHardReward(npcName, rng = Math.random) {
+function rollHardReward(npcName, rng = Math.random, player = null) {
   const entries = eligibleRewards(npcName);
   const total = entries.reduce((sum, entry) => sum + entry.rate[0] / entry.rate[1], 0);
+  const request = { player, minigame: "gnome-restaurant", kind: "unique", multiplier: 1 };
+  api?.emitCustomEvent?.("minigame:chance", request);
+  const unique = entries.filter(entry => entry.unique).reduce((sum, entry) => sum + entry.rate[0] / entry.rate[1], 0);
+  const target = Math.min(total, unique * Math.max(1, Number(request.multiplier) || 1));
+  const commonScale = total > unique ? (total - target) / (total - unique) : 0;
+  const weight = entry => entry.rate[0] / entry.rate[1] * (entry.unique ? (unique > 0 ? target / unique : 1) : commonScale);
   let roll = rng() * total;
   let chosen = entries[entries.length - 1];
   for (const entry of entries) {
-    roll -= entry.rate[0] / entry.rate[1];
+    roll -= weight(entry);
     if (roll < 0) {
       chosen = entry;
       break;
@@ -65,7 +71,7 @@ function giveTip(player, session) {
     player.sendMessage(`You are given ${coins} coins as a tip.`);
     return;
   }
-  const reward = rollHardReward(session.npcName);
+  const reward = rollHardReward(session.npcName, Math.random, player);
   for (const item of reward.items) {
     // Several rows are unnoted and many (pure essence is 51-97): what has no slot lands under the player.
     inventory.forceAdd(player, new core.Item(item.id, item.amount));

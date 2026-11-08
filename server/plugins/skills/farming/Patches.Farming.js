@@ -84,6 +84,7 @@ function farmFor(player) {
         farm = { offset: Math.floor(Math.random() * 31) * Model.MINUTE, patches: {}, tools: {}, autoWeed: false };
         player.setAttribute(FARM_ATTRIBUTE, farm);
     }
+    Model.applyGrowthRate(farm, Date.now());
     return farm;
 }
 
@@ -343,7 +344,7 @@ function rake(player, patch) {
     if (state.crop || state.scarecrow || !state.weeds) return false;
     if (!give(player, Data.itemId("Weeds"))) return false;
     state.weeds--;
-    state.nextAt = Model.nextGrowth(Date.now(), Data.FORMULAS.growth.tickMinutes, farmFor(player).offset);
+    state.nextAt = Model.nextGrowth(Date.now(), Data.FORMULAS.growth.tickMinutes, farmFor(player).offset, 1);
     award(player, 4, patch);
     // "farming:raked" { player, patch, patchType }: a weed raked from the patch.
     core.PluginManager.emitCustomEvent("farming:raked", { player, patch, patchType: patch.type });
@@ -1171,7 +1172,7 @@ function schedule(player) {
     const now = Date.now();
     const due = Math.min(Model.nextDue(farmFor(player)), seedlingDue.get(player) ?? Infinity, now + SWEEP_MS);
     if (due <= now) { immediate.add(player); return; }
-    const minute = Math.ceil(due / Model.MINUTE);
+    const minute = Math.ceil(due / Model.growthDuration(1));
     let players = dueByMinute.get(minute);
     if (!players) dueByMinute.set(minute, players = new Set());
     players.add(player);
@@ -1200,7 +1201,7 @@ function farmingTick() {
         const here = (pos.getZ() << 28) | (pos.getX() << 14) | pos.getY();
         if (here !== tile) { nearPatches.set(player, here); syncNearby(player); }
     }
-    const minute = Math.floor(Date.now() / Model.MINUTE);
+    const minute = Math.floor(Date.now() / Model.growthDuration(1));
     lastMinute ??= minute;
     while (lastMinute < minute) {
         const due = dueByMinute.get(++lastMinute);

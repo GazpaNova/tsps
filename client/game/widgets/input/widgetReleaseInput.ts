@@ -213,7 +213,7 @@ export function processWidgetReleaseInput(
             // For draggable widgets, onClick fires on release (not mousedown)
             // Check if this was a draggable widget that we deferred onClick for
             if (widgetInteraction.isWidgetDraggable(widgetInteraction.clickedWidget)) {
-                const { option, target, slot, itemId, opIndex } = getPrimaryWidgetAction(
+                const { option, target, slot, itemId, opIndex, opSubIndex } = getPrimaryWidgetAction(
                     widgetInteraction.clickedWidget,
                 );
                 deps.handleWidgetAction({
@@ -226,6 +226,7 @@ export function processWidgetReleaseInput(
                     slot,
                     itemId,
                     opIndex,
+                    opSubIndex,
                 });
             }
 

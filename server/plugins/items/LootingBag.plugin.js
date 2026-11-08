@@ -19,6 +19,7 @@ const BAG_DATA = "lootingBag";
 /** Settings: store everything used on the bag without asking; keep picked-up supplies out of it. */
 const STORE_ALL_ATTRIBUTE = "looting-bag:store-everything";
 const SKIP_SUPPLIES_ATTRIBUTE = "looting-bag:skip-supplies";
+const { BAG_IDS, ownsLootingBag } = require("./LootingBagOwnership");
 const CLOSED_BAG_ID = 11941;
 const OPEN_BAG_ID = 22586;
 /** inv looting_bag, which the bag's interface and the bank's looting bag view draw. */
@@ -344,6 +345,18 @@ function destroyBag(event) {
 }
 
 /** An open bag in the Wilderness takes what is picked up, unless it is a supply the player keeps out. */
+function enforceBagPickup(event) {
+  if (!BAG_IDS.includes(event.itemId)) return;
+  if (event.source === "telegrab" || ownsLootingBag(event.player)) {
+    event.allow = false;
+    event.player.sendMessage(event.source === "telegrab"
+      ? "You cannot telegrab a looting bag."
+      : "You already have a looting bag.");
+    return;
+  }
+  event.amount = Math.min(event.amount, 1);
+}
+
 function pickUp(event) {
   const { player } = event;
   const bag = bagFor(player);
@@ -553,6 +566,7 @@ module.exports = {
     api.onCustomEvent(core.Bank.INVENTORY_OP_EVENT, viewInBank);
     api.onCustomEvent("bank:empty-containers", emptyContainers);
     api.onGroundItemPickup(pickUp);
+    api.onCustomEvent("ground-items:take", enforceBagPickup);
     api.onItemOnItem(useItemOnBag);
     api.onItemAction("Looting bag", { Open: openBag, Close: closeBag, Check: checkBag, Deposit: depositOption, Settings: settings });
     api.onItemDropPolicy(destroyBag);

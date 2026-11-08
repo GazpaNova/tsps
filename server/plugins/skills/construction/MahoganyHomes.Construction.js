@@ -290,7 +290,7 @@ function talkToClient(event) {
   player.getSkillManager().addExperiences(Skill.CONSTRUCTION, CarpenterOutfit.withBonus(player, tier.contractXp));
   player.setRunEnergy(100);
   say(player, npcId, ["Wonderful, it all looks lovely! Here, have a cup of tea before you go."], () => {
-    player.sendMessage(`You have completed a ${tier.name.toLowerCase()} contract and earned ${tier.points} Carpenter points. You now have ${points.toLocaleString("en-US")}.`);
+    player.sendMessage(`You have completed a ${tier.name.toLowerCase()} contract and earned ${award.points} Carpenter points. You now have ${points.toLocaleString("en-US")}.`);
   });
   return true;
 }

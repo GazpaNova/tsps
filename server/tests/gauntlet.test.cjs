@@ -1189,3 +1189,18 @@ test('a login in another copied instance is not taken for a Gauntlet run: only t
   assert.equal(player.location.getX(), 8400, 'left where the other instance put them');
   assert.ok(!player.messages.some((message) => message.includes('no longer available')));
 });
+
+test('Revenant enhanced seed is 1/200 corrupted and 1/2000 regular per completed chest', () => {
+  for (const [mode, denominator] of [['regular',2000], ['corrupted',200]]) {
+    assert.equal(Rewards.TERTIARY[mode].find(([id]) => id === Rewards.ID.ENHANCED_SEED)[1], denominator);
+    let wins = 0;
+    for (let outcome = 0; outcome < denominator; outcome++) {
+      const items = Rewards.rollReward({mode,kind:'completed'}, true, () => (outcome+0.5)/denominator);
+      wins += Number(items.some(item => item.id === Rewards.ID.ENHANCED_SEED));
+    }
+    assert.equal(wins,1,mode);
+    for (const kind of ['incomplete','junk']) {
+      assert.ok(!Rewards.rollReward({mode,kind},true,()=>0).some(item=>item.id===Rewards.ID.ENHANCED_SEED));
+    }
+  }
+});

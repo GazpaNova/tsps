@@ -345,24 +345,24 @@ test("a layer needs size x 10 Mining; too low still pokes the layer timer", () =
   assert.equal(star.pokedTick, world.tick);
 });
 
-test("layers: 1% per 7 ticks while mined, 700 ticks a layer, held while nobody mines", () => {
+test("layers: 1% per 28 ticks while mined, 2800 ticks a layer, held while nobody mines", () => {
   const star = landedStar(2);
   star.discoveredBy = "someone";
   const p = miner();
   click(p, star, "Mine");
-  runTicks(7 * 10, () => 0.99);
+  runTicks(28 * 10, () => 0.99);
   assert.equal(star.percent, 10);
   assert.deepEqual(star.headbarNpc.bars.at(-1), { id: 1, fill: 45 });
   Mining.stop(p);
   runTicks(100, () => 0.99);
   assert.equal(star.percent, 10, "no one mining, no progress");
   click(p, star, "Mine");
-  runTicks(7 * 90, () => 0.99);
+  runTicks(28 * 90, () => 0.99);
   assert.equal(star.size, 1);
   assert.equal(star.object.getId(), 41229);
   assert.equal(Mining.sessions.has(p), false, "a new layer stops the miners");
   click(p, star, "Mine");
-  runTicks(700, () => 0.99);
+  runTicks(2800, () => 0.99);
   assert.ok(p.log.includes("The star disintegrates into dust."));
   assert.equal(star.gone, true);
   runTicks(2);

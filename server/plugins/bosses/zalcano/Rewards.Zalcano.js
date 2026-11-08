@@ -6,7 +6,7 @@
  * - everyone eligible gets crystal shards (1, 2 with 31 damage, 3 for the MVP - most damage),
  *   and one roll on the main table whose quantities grow with their points; the MVP gets 10%
  *   more and the infernal ashes;
- * - each kill has a 1 in 200 unique (39 in 40 a crystal tool seed, else an uncut onyx) for one
+ * - each kill has a 1 in 100 crystal tool seed or a 1 in 8,000 uncut onyx for one
  *   player with 31 damage, by points; each of them also rolls the Zalcano shard (1/1500 rising to
  *   1/750 at 1,000 points); those with 31 damage roll Smolcano (1/2250);
  * - the kill count goes up for everyone eligible.
@@ -111,10 +111,13 @@ function share(contributions, random = Math.random, npc = null) {
     if (uniqueEligible(entry) && random() < 1 / rewards.petChance) drops.push({ itemId: items.pet, amount: 1 });
     loot.set(player, drops);
   }
-  if (random() < 1 / rewards.uniqueChance) {
+  // Mutually exclusive intervals preserve the onyx rate while setting the seed rate exactly.
+  const uniqueRoll = random();
+  const seedChance = 1 / rewards.toolSeedChance;
+  if (uniqueRoll < seedChance + 1 / rewards.onyxChance) {
     const owner = uniqueOwner(contributions, random);
     if (owner) {
-      const seed = random() < rewards.seedWeight / (rewards.seedWeight + rewards.onyxWeight);
+      const seed = uniqueRoll < seedChance;
       loot.get(owner)?.push({ itemId: seed ? items.toolSeed : items.uncutOnyx, amount: 1 });
     }
   }

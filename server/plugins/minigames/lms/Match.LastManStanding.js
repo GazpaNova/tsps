@@ -36,6 +36,8 @@ const games = new Set();
 const gameOfPlayer = new Map();
 /** Deaths that began in a game end there, whatever happens meanwhile. */
 const dying = new Map();
+// Voidburn: multiply earned LMS currency only; rank and shop costs stay unchanged.
+const POINTS_REWARD_MULTIPLIER = 4;
 const PVP_ICONS = "pvp_icons";
 const RUNE_POUCH = "br_rune_replacement";
 /** The client's first player option, as Castle Wars, Bounty Hunter and Ferox use it. */
@@ -483,7 +485,7 @@ function results(game, player, place, how = "dead") {
 function pointsLine(game, player, place, kills) {
   const total = Common.points(player);
   if (game.clock < Common.data.timing.minTicksForPoints) return Common.message("tooShort", { total });
-  const earned = kills > 0 ? pointsFor(place, kills) : 0;
+  const earned = kills > 0 ? pointsFor(place, kills) * POINTS_REWARD_MULTIPLIER : 0;
   if (earned <= 0) return Common.message("noPoints", { total });
   const after = Common.add(player, Common.POINTS_ATTRIBUTE, earned);
   return Common.message("earned", { points: earned, s: earned === 1 ? "" : "s", total: after });

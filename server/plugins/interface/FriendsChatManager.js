@@ -6,6 +6,8 @@ const { DisplayNames } = require("../../src/main/typescript/elvarg/game/entity/i
 const { PlayerPunishment } = require("../../src/main/typescript/elvarg/util/PlayerPunishment");
 const { Task } = require("../../src/main/typescript/elvarg/game/task/Task");
 const { TaskManager } = require("../../src/main/typescript/elvarg/game/task/TaskManager");
+const globalChat = require("../world/data/voidburn-global-chat.json");
+const GLOBAL_OWNER_KEY = globalChat.owner.toLowerCase();
 const FriendsChatRank = {
     Unranked: -1,
     Friend: 0,
@@ -251,6 +253,16 @@ class FriendsChatManager {
             member.getSession().sendClientPacket(encodeChatMessage("channel", text, player.getDisplayName(), channel.profile.channelName, player.getIndex(), FRIENDS_CHAT_MESSAGE_TYPE));
         }
     }
+    static broadcastAchievement(player, text) {
+        const ownerKey = this.membershipByPlayer.get(player.getIndex());
+        const channel = this.channels.get(ownerKey);
+        if (!channel || this.offlinePlayerIds.has(player.getIndex())) return;
+        for (const member of channel.members.values()) {
+            if (this.offlinePlayerIds.has(member.getIndex()) ||
+                member.getRelations().hasIgnore(player.getLongUsername())) continue;
+            this.notification(member, text);
+        }
+    }
     static handleWidgetAction(player, groupId, componentId, rawOption, rawOpId) {
         const option = String(rawOption ?? "").trim() ||
             optionFromWidget(groupId, componentId, Math.trunc(rawOpId)) || "";
@@ -387,7 +399,7 @@ class FriendsChatManager {
         this.sendSnapshot(player);
         this.refreshFriendWatchers(player.getLongUsername(), player);
         const ownerKey = accountName(player.getUsername())?.key;
-        if (ownerKey) {
+        if (ownerKey && ownerKey !== GLOBAL_OWNER_KEY) {
             this.refreshOwnedChannel(player);
             if (action.action === "add_ignore") {
                 const channel = this.channels.get(ownerKey);
@@ -483,6 +495,7 @@ class FriendsChatManager {
         this.persist(player);
         if (notify) {
             this.notification(player, `Now talking in chat-channel ${profile.channelName}`);
+            if (ownerName.key === GLOBAL_OWNER_KEY) this.notification(player, `Welcome to ${globalChat.label}. To rejoin later, enter ${globalChat.owner}.`);
             this.notification(player, "To talk, start each line of chat with the / symbol.");
         }
         this.broadcastChannel(ownerName.key);
@@ -573,6 +586,10 @@ class FriendsChatManager {
         };
     }
     static setOwnChannelName(player, rawName) {
+        if (accountName(player.getUsername())?.key === GLOBAL_OWNER_KEY) {
+            this.notification(player, "Voidburn Global is managed by the server.");
+            return;
+        }
         const name = channelName(rawName);
         if (!name) {
             this.notification(player, "Chat-channel names must contain 1 to 12 valid characters.");
@@ -604,7 +621,7 @@ class FriendsChatManager {
      */
     static changeSetup(player, change) {
         const owner = accountName(player.getUsername());
-        if (!owner)
+        if (!owner || owner.key === GLOBAL_OWNER_KEY)
             return;
         const before = this.profileFromPlayer(player, owner);
         const relations = player.getRelations();
@@ -676,6 +693,7 @@ class FriendsChatManager {
         player.getPacketSender().sendEnterInputPrompt(title);
     }
     static refreshOwnedChannel(player) {
+        if (accountName(player.getUsername())?.key === GLOBAL_OWNER_KEY) return;
         const owner = accountName(player.getUsername());
         const channel = owner ? this.channels.get(owner.key) : undefined;
         if (!owner || !channel)
@@ -688,6 +706,11 @@ class FriendsChatManager {
         this.broadcastChannel(owner.key);
     }
     static loadOwnerProfile(owner) {
+        if (owner.key === GLOBAL_OWNER_KEY) return {
+            ownerKey: GLOBAL_OWNER_KEY, ownerName: globalChat.owner, channelName: globalChat.channelName,
+            entryRank: FriendsChatRank.Unranked, talkRank: FriendsChatRank.Unranked, kickRank: FriendsChatRank.Owner,
+            friends: new Set(), ignores: new Set(), friendRanks: new Map(),
+        };
         const online = this.onlinePlayer(owner);
         if (online)
             return this.profileFromPlayer(online, owner);
@@ -752,6 +775,7 @@ class FriendsChatManager {
     static memberRank(profile, player) {
         if ((player.getRights()?.getId?.() ?? 0) > 0)
             return FriendsChatRank.JagexModerator;
+        if (profile.ownerKey === GLOBAL_OWNER_KEY) return FriendsChatRank.Unranked;
         if (player.getLongUsername() === accountName(profile.ownerName)?.encoded)
             return FriendsChatRank.Owner;
         if (!profile.friends.has(player.getLongUsername()))

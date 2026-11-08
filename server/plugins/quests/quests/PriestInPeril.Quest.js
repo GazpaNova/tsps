@@ -536,8 +536,13 @@ module.exports = function registerPriestInPerilQuest(api) {
     }
   }
 
-  /** Fill Drezel's "[1-50] more" blank with the essence still owed. */
-  function fillEssenceLine(event) {
+  /** Customise Roald's rebuke and fill Drezel's remaining-essence blank. */
+  function customiseQuestLine(event) {
+    if (KING_ROALD_NPC_IDS.has(event.npcId)
+      && (event.text === "Are you a complete imbecile?" || event.text === "Are you mentally deficient?")) {
+      event.text = "What a FUCKING fool!!";
+      return;
+    }
     if (event.npcId !== DREZEL_NPC_ID || typeof event.text !== "string") return;
     if (!event.text.includes(ESSENCE_REMAINING_BLANK)) return;
     const remaining = Math.max(0, ESSENCE_REQUIRED - essenceHandedIn(event.player));
@@ -1060,7 +1065,7 @@ module.exports = function registerPriestInPerilQuest(api) {
   api.onNpcDialogueCondition(answerCondition);
   api.onCustomEvent("npc-dialogue:hook", handleStartHook);
   api.onCustomEvent("npc-dialogue:action", handleAction);
-  api.onCustomEvent("npc-dialogue:line", fillEssenceLine);
+  api.onCustomEvent("npc-dialogue:line", customiseQuestLine);
   api.onCustomEvent("door:toggle", handleLargeDoor);
   api.onCustomEvent("door:toggle", handleMausoleumGate);
   api.onCustomEvent("npc-dialogue:line", agreeToKillDog);

@@ -64,7 +64,15 @@ function buildRandomAppearanceLook() {
   return look;
 }
 
+/** A configured activity allow-list blocks every untagged or unrelated spawn source. */
+function botCreationAllowed(options = {}) {
+  if (process.env.DISABLE_PLAYER_BOTS === "1") return false;
+  const allowed = options.api?.getPluginConfig?.("PlayerBots:allowedActivities", null) ?? null;
+  return allowed === null || (Array.isArray(allowed) && typeof options.activity === "string" && allowed.includes(options.activity));
+}
+
 function createBotPlayer(username, spawn, options = {}) {
+  if (!botCreationAllowed(options)) return null;
   const loadPersistence = options.loadPersistence !== false;
   const saveRandomizedAppearance = options.saveRandomizedAppearance !== false;
   const World = options.api.getWorld();
@@ -132,4 +140,5 @@ function createBotPlayer(username, spawn, options = {}) {
 
 module.exports = {
   createBotPlayer,
+  botCreationAllowed,
 };

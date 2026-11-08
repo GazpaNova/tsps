@@ -83,7 +83,10 @@ const BOSS_LOG_STRUCT = 471;
 const LOG_CATEGORIES_PARAM = 683;
 const LOG_ITEMS_PARAM = 690;
 
-function lootingBagDrops(npc) {
+const { ownsLootingBag } = require("../items/LootingBagOwnership");
+
+function lootingBagDrops(npc, player) {
+  if (ownsLootingBag(player)) return false;
   if (!Wilderness.isInLocation(npc?.getLocation?.())) return false;
   const name = (npc.getCurrentDefinition?.() ?? npc.getDefinition?.())?.getName?.();
   return !LOOTING_BAG_EXCLUDED.has(name);
@@ -943,7 +946,7 @@ function rollTable(table, player, npc, context = killContext(player, npc), sourc
       conditionalTertiarySkipped++;
       continue;
     }
-    if (entry.name === LOOTING_BAG && !lootingBagDrops(npc)) continue;
+    if (entry.name === LOOTING_BAG && !lootingBagDrops(npc, player)) continue;
     if (hits(entry, rulesMultiplier(entry, rules) * entryMultiplier(table, entry, chance))) {
       drops.push(...resolveEntry(entry, player, context));
       hitNames.add(entry.name || "");
@@ -952,7 +955,7 @@ function rollTable(table, player, npc, context = killContext(player, npc), sourc
   for (const rule of rules) {
     if (rule.guarantee !== true) continue;
     const matching = (table.tertiary || []).filter((entry) => Number(entry.out_of) > 1 && rule.pattern.test(entry.name || "")
-      && (entry.name !== LOOTING_BAG || lootingBagDrops(npc)));
+      && (entry.name !== LOOTING_BAG || lootingBagDrops(npc, player)));
     // Only an entry the rule accepts satisfies it: a natural drop of one it refuses (a clue tier already held) does not.
     const allowed = typeof rule.accept === "function" ? matching.filter((entry) => rule.accept(entry)) : matching;
     if (allowed.length === 0 || allowed.some((entry) => hitNames.has(entry.name || ""))) continue;

@@ -4,13 +4,17 @@ require('../dist/Server').Server.installProductionPathResolver();
 const { CachePipeline } = require('../dist/game/cache/CachePipeline');
 const { PluginManager } = require('../dist/plugins/PluginManager');
 const { Player } = require('../dist/game/entity/impl/player/Player');
-let core, quest, hooks, itemOnObject, variant, line, action, named;
+let core, quest, hooks, itemOnObject, variant, line, action, named, login, logout;
+const tasks = [], itemActions = new Map();
 before(async () => {
   await CachePipeline.initialize(require('node:path').resolve(__dirname, '..'));
   core = PluginManager.getCoreApi();
   hooks = new Map(); named = new Map();
   const dispatch = (name, event) => { for (const fn of hooks.get(name) ?? []) fn(event); };
   const api = new Proxy({core, persistAttribute() {}, emitCustomEvent: dispatch,
+    getTaskManager: () => ({submit(task) { task.setRunning(true); tasks.push(task); }}),
+    onPlayerLogin(fn) { login = fn; }, onPlayerLogout(fn) { logout = fn; },
+    onItemAction(name, actions) { itemActions.set(name, actions); },
     onCustomEvent(name, fn) { hooks.set(name, [...hooks.get(name) ?? [], fn]); },
     onNpcDialogueVariant(fn) { variant = fn; },
     onItemOnObject(fn) { itemOnObject = fn; },
@@ -22,7 +26,9 @@ before(async () => {
   line = event => dispatch('npc-dialogue:line', event);
 });
 function fixture(stage) {
+  tasks.length = 0;
   const player = new Player(null), vars = new Map(), messages = [];
+  player.setRegistered(true);
   const sender = new Proxy({}, {get: (_, key) => ['getVarbit', 'getVarp'].includes(key) ? () => 0 : key === 'sendVarbit' ? (id, value) => { vars.set(id, value); return sender; } : () => sender});
   player.getPacketSender = () => sender;
   player.sendMessage = text => messages.push(text);
@@ -32,6 +38,7 @@ function fixture(stage) {
 }
 function give(inv, id, n = 1) { inv.add(new core.Item(id, n), false); }
 function act(player, npcId, stepId) { action({player, npcId, stepId}); }
+function tick(n) { while(n-- > 0) for(const task of [...tasks]) if(task.isRunning()) task.execute(); }
 test('Alrena handover is atomic, repeat safe, and a cancelled talk spends nothing', () => {
   const {player, inv} = fixture(1), I = core.ItemIdentifiers, npcId = core.NpcIdentifiers.ALRENA;
   give(inv, I.DWELLBERRIES);
@@ -101,7 +108,9 @@ test('grill requires attempted opening before accepting one rope and publishes n
  itemOnObject({player,itemId:I.ROPE,objectId:11422,location});
  assert.equal(quest.getStage(player),9);assert.equal(inv.getAmount(I.ROPE),0);assert.equal(vars.get(1787),1);
  itemOnObject({player,itemId:I.ROPE,objectId:11422,location});assert.equal(quest.getStage(player),9);
- act(player,core.NpcIdentifiers.EDMOND_2,'oCU2uO');assert.equal(quest.getStage(player),10);assert.equal(vars.get(1787),2);
+ player.setLocation(new core.Location(2517,9755,0));
+ act(player,core.NpcIdentifiers.EDMOND_2,'oCU2uO');assert.equal(quest.getStage(player),9);
+ tick(3);assert.equal(quest.getStage(player),10);assert.equal(vars.get(1787),2);
 });
 test('mask replacement has capacity and repeat guards, including an equipped mask', () => {
  const {player,inv}=fixture(2),I=core.ItemIdentifiers,npc=core.NpcIdentifiers.ALRENA;
@@ -123,32 +132,76 @@ test('clerk permission waits for the actual permission line', () => {
  variant({player,npcId});assert.equal(quest.getStage(player),24);
  line({player,npcId,text:'I suppose they can come in then. If they keep it short.'});assert.equal(quest.getStage(player),25);
 });
-test('warrant entry defers to the real Doors event chain without replaying dialogue', () => {
- const runtime=require('../plugins/quests/QuestRuntime'), original=runtime.startTranscript, events=new Map(), operations=[], transcripts=[];
- const dispatch=(name,event)=>{ for(const fn of events.get(name)??[])fn(event); };
- const doorCore={...core,
-  ObjectManager:{register:o=>operations.push(['register',o.getId()]),deregister:o=>operations.push(['deregister',o.getId()])},
-  TaskManager:{submit(){}},Sounds:{...core.Sounds,sendSound(){}},
- };
- core.ObjectDefinition.init();
- let handover;
- const api=new Proxy({core:doorCore,persistAttribute(){},emitCustomEvent:dispatch,
-  onCustomEvent(name,fn){events.set(name,[...events.get(name)??[],fn]);if(name==='npc-dialogue:action')handover=fn;},
- },{get:(target,key)=>key in target?target[key]:()=>{}});
- try{
-  runtime.startTranscript=(_api,_player,_npc,_page,variant)=>{transcripts.push(variant);return true;};
-  require('../plugins/quests/quests/PlagueCity.Quest')(api);
- }finally{runtime.startTranscript=original;}
- require('../plugins/objects/Doors.plugin').register(api);
+test('warrant entry crosses only its player without changing shared door morphs or spending the warrant', () => {
  const {player,inv}=fixture(27);
  give(inv,core.ItemIdentifiers.WARRANT);
- player.setLocation(new core.Location(2533,3273,0));
- const object=new core.GameObject(37321,new core.Location(2533,3272,0),0,3);
- const click={player,object,objectId:37321,location:{x:2533,y:3272,z:0},handled:false};
- dispatch('door:toggle',click);
- assert.equal(click.handled,false,'the partial quest handler yields warrant entry to the door system');
- dispatch('door:open',{player,object,handled:false});
- assert.equal(transcripts.length,0,'door:open must not restart the warrant dialogue');
+ player.setLocation(new core.Location(2540,3274,0));
+ const object=new core.GameObject(37321,new core.Location(2540,3273,0),0,3);
+ const click={player,object,objectId:37321,location:{x:2540,y:3273,z:0},handled:false};
+ for(const fn of hooks.get('door:toggle')) fn(click);
+ assert.equal(click.handled,true);tick(2);
+ assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[2540,3272]);
+ assert.equal(object.getId(),37321);
  assert.equal(quest.getStage(player),27);
  assert.equal(inv.getAmount(core.ItemIdentifiers.WARRANT),1);
+});
+
+test('garden dig is delayed, repeat safe, conserves the spade and switches Edmond only for this player', () => {
+ const {player,inv,vars}=fixture(7);give(inv,core.ItemIdentifiers.SPADE);
+ const dig=itemActions.get('Spade').Dig;
+ dig({player});dig({player});assert.equal(tasks.length,1);assert.equal(quest.getStage(player),7);
+ tick(3);assert.equal(quest.getStage(player),8);assert.equal(vars.get(1783),1);
+ assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[2518,9758]);
+ assert.equal(inv.getAmount(core.ItemIdentifiers.SPADE),1);
+ const second=fixture(7);login({player:second.player});assert.equal(second.vars.get(1783),0);
+ login({player});assert.equal(vars.get(1783),1);
+});
+
+test('logout cancels digging without advancing the quest and relog can retry', () => {
+ const {player,inv}=fixture(7);give(inv,core.ItemIdentifiers.SPADE);
+ itemActions.get('Spade').Dig({player});logout({player});tick(3);
+ assert.equal(quest.getStage(player),7);assert.equal(player.getMovementQueue().isMovementBlocked(),false);
+ itemActions.get('Spade').Dig({player});tick(3);assert.equal(quest.getStage(player),8);
+});
+
+test('pipe requires an opened grill and an equipped gas mask, then the mud-pile route returns safely', () => {
+ const {player,inv}=fixture(9);player.setLocation(new core.Location(2514,9740,0));
+ const event={player,objectId:2542,location:{x:2514,y:9737,z:0}};
+ named.get('Pipe')['Climb-up'](event);tick(3);assert.equal(player.getLocation().getY(),9740);
+ quest.setStage(player,10);give(inv,core.ItemIdentifiers.GAS_MASK);
+ named.get('Pipe')['Climb-up'](event);assert.equal(tasks.length,0,'carrying the mask is insufficient');
+ player.getEquipment().setItem(core.Equipment.HEAD_SLOT,new core.Item(core.ItemIdentifiers.GAS_MASK));
+ named.get('Pipe')['Climb-up'](event);tick(3);assert.equal(player.getLocation().getY(),3304);
+ player.setLocation(new core.Location(2518,9758,0));
+ named.get('Mud pile').Climb({player,objectId:2533,location:{x:2519,y:9759,z:0}});tick(2);
+ assert.equal(player.getLocation().getY(),3333);
+});
+
+test('plague-house stairs support a round trip and a missing warrant cannot enter', () => {
+ const {player}=fixture(27);player.setLocation(new core.Location(2540,3274,0));
+ const e={player,objectId:37321,location:{x:2540,y:3273,z:0}};
+ for(const fn of hooks.get('door:toggle'))fn(e);assert.equal(tasks.length,0);
+ player.setLocation(new core.Location(2538,3269,0));
+ named.get('Spooky stairs')['Walk-down']({player,objectId:2522,location:{x:2536,y:3268,z:0}});tick(2);
+ assert.equal(player.getLocation().getY(),9670);
+ named.get('Spooky stairs')['Walk-up']({player,objectId:2523,location:{x:2536,y:9671,z:0}});tick(2);
+ assert.equal(player.getLocation().getY(),3269);
+});
+
+test('clerk permission makes Bravek reachable through his quest door', () => {
+ const {player}=fixture(25);player.setLocation(new core.Location(2529,3314,0));
+ const e={player,objectId:core.ObjectIdentifiers.DOOR_80,location:{x:2530,y:3314,z:0}};
+ for(const fn of hooks.get('door:toggle'))fn(e);tick(2);
+ assert.equal(e.handled,true);assert.equal(player.getLocation().getX(),2531);
+});
+
+test('unlocking Elena cell permits passage and conserves its key', () => {
+ const {player,inv}=fixture(27);give(inv,core.ItemIdentifiers.A_SMALL_KEY);
+ player.setLocation(new core.Location(2538,9672,0));
+ const e={player,objectId:core.ObjectIdentifiers.DOOR_78,location:{x:2539,y:9672,z:0}};
+ for(const fn of hooks.get('door:toggle'))fn(e);tick(2);
+ assert.equal(e.handled,true);assert.equal(player.getLocation().getX(),2540);
+ assert.equal(inv.getAmount(core.ItemIdentifiers.A_SMALL_KEY),1);
+ assert.match(variant({player,npcId:core.NpcIdentifiers.ELENA_2}),/after-unlocking/);
+ assert.equal(quest.getStage(player),28);
 });

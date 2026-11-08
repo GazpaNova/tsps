@@ -7,6 +7,7 @@ module.exports = {
   members: true,
   register(api) {
     require("./farming/Core.Farming").init(api);
+    require("./farming/Model.Farming").setGrowthMultiplier(api.getPluginConfig?.("Farming:growthMultiplier", 1) ?? 1);
     require("./farming/Patches.Farming").attach(api);
   },
 };

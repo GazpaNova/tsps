@@ -112,8 +112,8 @@ function pick(random, rows, total, weightOf) {
 function rollDrops({ npcId, combat, skulled = false, onTask = false, random = Math.random }) {
   const drops = [];
   const sqrt = Math.floor(Math.sqrt(combat));
-  // Always: 2 to (floor(sqrt(combat)) + 1) x 2 ether, in even amounts.
-  drops.push({ itemId: ITEMS.ETHER, amount: 2 * between(random, 1, sqrt + 1) });
+  // Voidburn: double the standard ether quantity.
+  drops.push({ itemId: ITEMS.ETHER, amount: 4 * between(random, 1, sqrt + 1) });
 
   const { A, B } = thresholds(combat);
   const uniqueOdds = A * UNIQUE_RATE * (skulled ? UNIQUE_SKULLED : 1) * (onTask ? UNIQUE_ON_TASK : 1);

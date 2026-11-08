@@ -506,7 +506,7 @@ export function processWidgetClickInput(
                     // Only transmit widget ops to the server when the transmit flag is set
                     // for the action (IF_SETEVENTS / Client.widgetFlags).
                     // Avoid double-send when the GL widget system already dispatches onWidgetAction.
-                    const { option, target, slot, itemId, opIndex } = primaryAction;
+                    const { option, target, slot, itemId, opIndex, opSubIndex } = primaryAction;
                     try {
                         const payload = deps.buildWidgetActionPayload({
                             widget: w,
@@ -518,6 +518,7 @@ export function processWidgetClickInput(
                             slot,
                             itemId,
                             opIndex,
+                            opSubIndex,
                         });
                         if (payload) {
                             // PlayerDesign (679): handle locally and do not transmit arrow/button ops.

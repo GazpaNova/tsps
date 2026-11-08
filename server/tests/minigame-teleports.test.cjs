@@ -270,20 +270,24 @@ test('cooldowns: the captured messages, and the varps set on landing', async (t)
     assert.equal(MinigameTeleports._test.minutesLeft(now - 20, now), 0);
 
     const home = recordingPlayer();
-    home.player.setAttribute(HomeTeleports._test.LAST_HOME_TELEPORT_ATTRIBUTE, now - 5);
+    home.player.setAttribute(HomeTeleports._test.LAST_HOME_TELEPORT_ATTRIBUTE, now - 1);
     const lumbridge = CacheDefinitions.getSpellByName('Lumbridge Home Teleport');
     HomeTeleports._test.castHomeTeleport({
         player: home.player, buttonId: lumbridge.widgetId, itemId: lumbridge.itemId, handled: false,
     });
-    assert.deepEqual(home.ticks.flat(), ['You need to wait another 25 minutes to cast this spell.']);
+    assert.deepEqual(home.ticks.flat(), ['You need to wait another 4 minutes to cast this spell.']);
 
-    // Off cooldown: the home teleport lands and records the minute in varp 892.
+    assert.equal(HomeTeleports._test.minutesLeft(now - 5, 5, now), 0, 'Revenant custom: 5 minutes');
+
+    // Off cooldown: the home teleport lands and records the minute in varp 892, moved up 25
+    // minutes so the client's 30-minute countdown shows our 5.
     const fresh = recordingPlayer();
     HomeTeleports._test.castHomeTeleport({
         player: fresh.player, buttonId: lumbridge.widgetId, itemId: lumbridge.itemId, opId: 1, handled: false,
     });
     run(fresh.ticks, fresh.nextTick, 26);
-    assert.ok(fresh.ticks.flat().includes(`varp 892=${Sequence.dateMinutes()}`));
+    assert.ok(fresh.ticks.flat().includes(`varp 892=${Sequence.dateMinutes() - 25}`));
+    assert.equal(fresh.player.getAttribute(HomeTeleports._test.LAST_HOME_TELEPORT_ATTRIBUTE), Sequence.dateMinutes());
 });
 
 test('Animation opens the native picker for every home spell without casting or checking its cooldown', async (t) => {

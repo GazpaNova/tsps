@@ -21,6 +21,7 @@ const SCROLL = 21802;
 const teleports = [];
 const groundItems = [];
 let prompt = null;
+let entryFeeOverride = null;
 const ruleCalls = [];
 const wildernessRules = {
   process: (mobile) => ruleCalls.push(["process", mobile]),
@@ -35,6 +36,7 @@ before(async () => {
   await CachePipeline.initialize(path.resolve(__dirname, ".."));
   const core = PluginManager.getCoreApi();
   T.attach({
+    getPluginConfig: (key, fallback) => entryFeeOverride ?? fallback,
     core: {
       ...core,
       Bank: { getTabForItem: () => 0 },
@@ -306,6 +308,30 @@ test("the scroll's Config is found by name (rev 241: fourth slot, then Drop); th
   assert.equal(ItemActionPacketListener.isDropOption("", 5), true, "no option text: the drop slot");
   assert.equal(ItemActionPacketListener.isDropOption("uncharge", 5), false, "charged items' Uncharge reaches plugins");
   assert.equal(ItemActionPacketListener.isDropOption("discard", 5), true);
+});
+
+test("free Revenant entries require no coins, payment prompt or deposit", (t) => {
+  entryFeeOverride = 0;
+  t.after(() => { entryFeeOverride = null; });
+  for (const [key, entrance] of T.ENTRANCES) {
+    const rec = player({ coins: 17, banked: 23 });
+    rec.p.setAttribute(T.CREVICE_WARNED_ATTRIBUTE, true);
+    prompt = null;
+    const [x, y] = key.split(',').map(Number);
+    assert.equal(T.enter({ player: rec.p, location: objectAt(x, y) }), true);
+    assert.deepEqual([rec.p.getLocation().getX(), rec.p.getLocation().getY()], entrance.to);
+    assert.equal(rec.coins(), 17);
+    assert.equal(rec.banked(), 23);
+    assert.equal(prompt, null);
+    assert.notEqual(rec.p.getAttribute(T.FEE_PAID_ATTRIBUTE), true);
+  }
+  const broke = player();
+  assert.equal(T.payFee(broke.p), true);
+  groundItems.length = 0;
+  broke.p.setAttribute(T.FEE_PAID_ATTRIBUTE, true);
+  broke.p.moveTo(new Location(3197, 10056, 0));
+  T.onDeath({ player: broke.p, killer: broke.p });
+  assert.equal(groundItems.length, 0, 'disabled fee cannot generate PvP coin loot');
 });
 
 test("the caves' area runs the Wilderness rules, so bots and players in it can be attacked", () => {

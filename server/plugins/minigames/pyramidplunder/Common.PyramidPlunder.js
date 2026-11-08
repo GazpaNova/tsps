@@ -234,8 +234,10 @@ function rollUrnArtefact(room, random = Math.random) {
 }
 
 /** The Wiki's per-room sceptre chance, rolled on every chest and sarcophagus opening. */
-function rollSceptre(room, random = Math.random) {
-  return random() < 1 / roomData(room).sceptre;
+function rollSceptre(room, random = Math.random, player = null) {
+  const request = { player, minigame: "pyramid-plunder", kind: "unique", multiplier: 1 };
+  getApi()?.emitCustomEvent?.("minigame:chance", request);
+  return random() < Math.min(1, Math.max(1, Number(request.multiplier) || 1) / roomData(room).sceptre);
 }
 
 function rollHit(random = Math.random, min = 1, max = 4) {

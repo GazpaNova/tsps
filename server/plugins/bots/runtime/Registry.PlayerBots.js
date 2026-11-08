@@ -533,6 +533,7 @@ function createBotRegistry(options) {
     const persistent = plan.persistent === true;
     const bot = createBotPlayer(username, botSpawn, {
       api: botApi,
+      activity: plan.activity,
       loadPersistence: persistent,
       saveRandomizedAppearance: false,
     });
@@ -1244,6 +1245,7 @@ function createBotRegistry(options) {
         username,
         spawnLocation: location,
         mode: options.mode ?? null,
+        activity: options.activity,
         persistent: options.persistent === true,
         pvpMetadata: options.pvpMetadata,
       });

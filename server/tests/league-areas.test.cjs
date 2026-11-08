@@ -246,7 +246,11 @@ test("the map squares follow the Wiki's areas; instances and the places open to 
   assert.equal(areaAt(3000, 3000, { league: 99 }), null, "no league, no areas");
 });
 
-test("a locked area refuses a walk, a teleport and a respawn; open ground and a main character are untouched", () => {
+test("a locked area refuses a walk, a teleport and a respawn; open ground and a main character are untouched", (t) => {
+  const worldSpawn = core.WorldDefinition.WORLD_SPAWN;
+  const originalSpawn = worldSpawn.clone();
+  t.after(() => worldSpawn.set(originalSpawn.getX(), originalSpawn.getY(), originalSpawn.getZ()));
+  worldSpawn.set(2662, 3305, 0); // Explicit locked spawn; independent of Voidburn's Lumbridge configuration.
   const league = character("walker");
   const lumbridgeSide = at(3263, 3220);
   const alKharidSide = at(3265, 3220);

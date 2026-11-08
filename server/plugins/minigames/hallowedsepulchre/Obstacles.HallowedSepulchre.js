@@ -217,7 +217,7 @@ function gate(event) {
   return true;
 }
 
-/** The floor stairs: the next floor's Agility level, then +2 the floor's credit and the way down. */
+/** The floor stairs: credit the floor and descend after two ticks. */
 function floorStairs(event) {
   const found = runAt(event);
   if (!found) return false;
@@ -230,10 +230,6 @@ function floorStairs(event) {
   }
   const next = Common.data.floors.find((floor) => floor.floor === run.floorNumber + 1);
   if (!next) return false;
-  if (Common.level(player, "AGILITY") < next.agility) {
-    player.sendMessage(Common.message("agilityLevel", { level: next.agility }));
-    return true;
-  }
   player.getMovementQueue().reset();
   run.transitioning = true;
   run.schedule(2, () => run.completeFloor());

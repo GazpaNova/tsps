@@ -171,6 +171,7 @@ const SPAWN_ATTEMPTS = 16;
  * "enabled": true spawn (temporary until /host controls them).
  */
 function startBotSites(options = {}) {
+  if (options.api?.getPluginConfig?.("PlayerBots:allowedActivities", null) != null) return;
   const { api, botApi, runtime, registry, world, resetMovementState } = options;
   if (!runtime || !registry || !Array.isArray(registry.sites) || registry.sites.length === 0) {
     return null;

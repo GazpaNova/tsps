@@ -39,11 +39,6 @@ function climbDown({ player }) {
     Common.npcChat(player, 9639, Common.message("strangerWait"));
     return true;
   }
-  const { agility } = Common.data.floors[0];
-  if (Common.level(player, "AGILITY") < agility) {
-    player.sendMessage(Common.message("agilityLevelEnter", { level: agility }));
-    return true;
-  }
   if (flag(player, "entryCheck")) {
     Run.start(player);
     return true;

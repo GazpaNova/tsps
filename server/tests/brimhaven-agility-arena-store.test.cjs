@@ -85,7 +85,7 @@ test("a ticket buys 345 Agility XP, 10% more with Karamja gloves 2 or better", a
   await plain.buy(ENTRY.XP);
   assert.equal(plain.amount(Items.AGILITY_ARENA_TICKET_3), 2);
   const gained = plain.xp() - before;
-  assert.equal(gained, Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 10) / 10);
+  assert.equal(gained, Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 4 * 10) / 10);
   assert.equal(plain.amount(Store.STOCK.XP), 0, "the XP row hands over no item");
 
   const gloved = shopper(t, [[Items.AGILITY_ARENA_TICKET_3, 1]]);
@@ -94,7 +94,7 @@ test("a ticket buys 345 Agility XP, 10% more with Karamja gloves 2 or better", a
   const start = gloved.xp();
   await gloved.buy(ENTRY.XP);
   assert.equal(gloved.amount(Items.AGILITY_ARENA_TICKET_3), 0);
-  assert.equal(gloved.xp() - start, Math.floor(379.5 * GameConstants.EXPERIENCE_MULTIPLIER * 10) / 10);
+  assert.equal(gloved.xp() - start, Math.floor(379.5 * GameConstants.EXPERIENCE_MULTIPLIER * 4 * 10) / 10);
 });
 
 test("Buy 10 on Agility XP spends the tickets held, then refuses the rest (rsprox 75)", async (t) => {
@@ -103,7 +103,7 @@ test("Buy 10 on Agility XP spends the tickets held, then refuses the rest (rspro
   const before = f.xp();
   await f.buy(ENTRY.XP, 4);
   assert.equal(f.amount(Items.AGILITY_ARENA_TICKET_3), 0);
-  assert.equal(f.xp() - before, 3 * Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 10) / 10);
+  assert.equal(f.xp() - before, 3 * Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 4 * 10) / 10);
   assert.ok(f.messages.includes("You don't have enough Agility Arena Tickets."), f.messages.join(" | "));
 });
 
@@ -116,7 +116,7 @@ function fullShopper(t, inventory) {
 }
 
 test("Agility XP needs no free inventory slot", async (t) => {
-  const xp = Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 10) / 10;
+  const xp = Math.floor(345 * GameConstants.EXPERIENCE_MULTIPLIER * 4 * 10) / 10;
   for (const [op, spent] of [[2, 1], [3, 3]]) {
     const f = fullShopper(t, [[Items.AGILITY_ARENA_TICKET_3, 3]]);
     const before = f.xp();

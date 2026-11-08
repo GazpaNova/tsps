@@ -182,7 +182,9 @@ function reward(player, points) {
   player.sendMessage(`Your subdued Wintertodt count is: <col=ff0000>${kills}</col>.`);
   CombatAchievements.subdued(player, points, kills);
 
-  const earned = rewardsFor(points);
+  const award = { player, minigame: "wintertodt", points: rewardsFor(points) };
+  Shared.api().emitCustomEvent("minigame:points", award);
+  const earned = award.points;
   const owed = Math.min(Shared.MAX_REWARDS, rewardsOwed(player) + earned);
   player.setAttribute(ATTR_REWARDS, owed);
   syncVars(player);

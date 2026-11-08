@@ -49,7 +49,13 @@ function rollFish(eligible, random) {
   return lowest[Math.floor(random() * lowest.length)];
 }
 
-function rollCatch(fishCount, fishingLevel, random = Math.random, ownsPiece = () => 0) {
+function uniqueMultiplier(player) {
+  const request = { player, minigame: "fishing-trawler", kind: "unique", multiplier: 1 };
+  Shared.api()?.emitCustomEvent?.("minigame:chance", request);
+  return Math.max(1, Number(request.multiplier) || 1);
+}
+
+function rollCatch(fishCount, fishingLevel, random = Math.random, ownsPiece = () => 0, player = null) {
   const ids = Shared.ids();
   const eligible = ids.fish.filter((fish) => fish.level <= fishingLevel);
   const counts = new Map();
@@ -71,7 +77,7 @@ function rollCatch(fishCount, fishingLevel, random = Math.random, ownsPiece = ()
   const owned = pieces.map((id) => Number(ownsPiece(id)));
   const limit = Math.min(2, Math.min(...owned) + 1);
   const missing = pieces.filter((_id, index) => owned[index] < limit);
-  if (missing.length > 0 && Math.floor(random() * Shared.DATA.anglerChance) === 0) {
+  if (missing.length > 0 && random() < Math.min(1, uniqueMultiplier(player) / Shared.DATA.anglerChance)) {
     const id = missing[Math.floor(random() * missing.length)];
     add(id);
     angler.push(id);
@@ -90,7 +96,7 @@ function award(player, voyage, random = Math.random) {
     player.sendMessage(Shared.message("tooLittle"));
     return null;
   }
-  const reward = rollCatch(voyage.shareFor(player), Shared.baseLevel(player, "FISHING"), random, (id) => ownedAmount(player, id));
+  const reward = rollCatch(voyage.shareFor(player), Shared.baseLevel(player, "FISHING"), random, (id) => ownedAmount(player, id), player);
   player.setAttribute(Shared.REWARD_ATTRIBUTE, { items: reward.items, xp: reward.xp });
   const fish = Object.freeze(reward.items
     .filter(([id]) => Shared.ids().fish.some((entry) => entry.id === id))
@@ -106,7 +112,7 @@ function rollHeron(player, points) {
   const petChance = points >= Shared.DATA.points.max ? fullMeterChance : chance;
   const api = Shared.api();
   if (typeof api?.emitCustomEvent !== "function") return;
-  api.emitCustomEvent("fishing:success", { player, skill: Shared.core().Skill.FISHING, petChance, itemId: null, source: "fishing-trawler" });
+  api.emitCustomEvent("fishing:success", { player, skill: Shared.core().Skill.FISHING, petChance: Math.max(1, petChance / uniqueMultiplier(player)), itemId: null, source: "fishing-trawler" });
 }
 
 /** Inspect the trawler net on the dock: the catch to the bank, its experience to Fishing. */

@@ -236,6 +236,11 @@ function light({ player, object }) {
     if (!current()) return;
     const stand = standNear(object);
     const reward = rewardFor(remains);
+    if (reward.id !== COINS) {
+      const award = { player, minigame: "shades-of-mortton", points: reward.amount };
+      Common.api.emitCustomEvent("minigame:points", award);
+      reward.amount = award.points;
+    }
     // Cremation rewards remain private to the burner for five minutes (500 game cycles).
     Common.core.ItemOnGroundManager.registerLocation(player, new Common.core.Item(reward.id, reward.amount),
       stand, player.getPrivateArea(), { goesGlobal: false, despawnDelay: p().rewardDespawnTicks });

@@ -1,12 +1,12 @@
 /**
  * Gemstone Crab (npc 14779) - a timed world boss in the Tlati Rainforest.
  *
- * It rises at one of three mines and stays about ten minutes; its hitpoints are that time, so
+ * It rises at one of three mines and stays about twenty minutes on Voidburn; its hitpoints are that time, so
  * hits show but never lower it (OSRS Wiki: the bar is a timer, not damage). Then it burrows,
  * leaving a shell (npc 14780) that the 16 players who dealt it the most damage may mine once
  * each for three uncut gems, and rises at another mine. Each mine's cave leads to the crab.
  * It hits for at most 1 (crush, every 7 ticks), switching between players in reach; the
- * centre tile of its 5x5 is safe. Combat XP against it is 87.5%.
+ * centre tile of its 5x5 is safe. Voidburn grants +15% combat XP against it.
  *
  * Behaviour from the OSRS Wiki; the cave crawl, animations, HUD and one spot from a live
  * capture (docs/gemstone-crab.md); the rest of the design follows OpenRune-Server's
@@ -43,8 +43,8 @@ const SPOTS = [
   { crab: [1238, 3041], cave: [1245, 3035], exit: [1246, 3038], area: { minX: 1224, maxX: 1250, minY: 3029, maxY: 3055 } },
 ];
 
-/** Its lifetime in ticks: about ten minutes (Wiki); captured 1073 and 1086, OpenRune 918-967. */
-const LIFETIME_TICKS = [918, 1086];
+/** Base lifetime is 918-1086 ticks; Voidburn doubles both ends of that range. */
+const LIFETIME_TICKS = [1836, 2172]; // Voidburn: twice the original active lifetime.
 /**
  * After it burrows (as captured): 2 ticks to the announcement and the shell's blocking loc,
  * 4 to the shell and who may mine it, 8 to the HUD fading, and 29 to the next crab rising
@@ -61,7 +61,7 @@ const ATTACK_TICKS = 7;
 const MAX_HIT = 1;
 const HOLD_ATTACKS = [3, 6];
 const SIZE = 5;
-const COMBAT_XP_MULTIPLIER = 0.875;
+const COMBAT_XP_MULTIPLIER = 1.15; // Voidburn: +15% damage-based combat XP instead of the vanilla penalty.
 /** Headbar 20 is 120 wide; the crab's bar is its time left. */
 const HEALTH_BAR = { id: 20, width: 120 };
 

@@ -125,7 +125,7 @@ for(const which of ['coins','tokkul'])test(`native ${which} sale cannot consume 
 test('ordinary native Tokkul sale survives actual Bank deposit/withdraw and fresh save restoration',async t=>{
   const f=actor(t),currency=core.ItemIdentifiers.TOKKUL,item=core.ItemIdentifiers.UNCUT_SAPPHIRE;
   f.p.getInventory().add(new core.Item(currency,100),false);f.p.getInventory().add(new core.Item(item),false);open(f,1468);const before=stock(f,item);
-  await sale(f,item);const balance=f.p.getInventory().getAmount(currency);assert.ok(balance>100);assert.equal(f.p.getInventory().getAmount(item),0);assert.equal(stock(f,item),before+1);
+  await sale(f,item);const balance=f.p.getInventory().getAmount(currency);assert.ok(balance>100);assert.equal(f.p.getInventory().getAmount(item),0);assert.equal(stock(f,item),before);
   f.p.getPacketSender().sendInterfaceRemoval();f.p.getBank(0).open();core.Bank.deposit(f.p,currency,f.p.getInventory().getSlotForItemId(currency),balance,false);assert.equal(f.p.getInventory().getAmount(currency),0);
   core.Bank.withdraw(f.p,currency,f.p.getBank(0).getSlotForItemId(currency),balance,0);assert.equal(f.p.getInventory().getAmount(currency),balance);
   PM.emitPlayerLogout({player:f.p,username:f.p.getUsername()});const g=actor(t);PlayerSave.fromPlayer(f.p).applyToPlayer(g.p);PM.emitPlayerLogin({player:g.p,username:g.p.getUsername(),isNewAccount:false});g.p.needsPlacement=false;
@@ -136,7 +136,7 @@ for(const gap of [0,1])test(`native payment ${gap===0?'exactly fills the stack':
   inv.add(new core.Item(currency,1),false);inv.add(new core.Item(item),false);open(f,1468);const price=await refund(f,item);
   const money=inv.getItems()[inv.getSlotForItemId(currency)],gem=inv.getItems()[inv.getSlotForItemId(item)];money.setAmount(CAP-price+gap);const before=stock(f,item);
   await sale(f,item);
-  assert.equal(inv.getAmount(currency),gap?CAP-price+1:CAP);assert.equal(inv.getAmount(item),gap?1:0);assert.equal(stock(f,item),before+(gap?0:1));
+  assert.equal(inv.getAmount(currency),gap?CAP-price+1:CAP);assert.equal(inv.getAmount(item),gap?1:0);assert.equal(stock(f,item),before);
   assert.equal(inv.getItems()[inv.getSlotForItemId(currency)],money,'preview must not replace the live currency stack');
   if(gap)assert.equal(inv.getItems()[inv.getSlotForItemId(item)],gem,'preview must not replace the refused item');
 });
@@ -156,7 +156,7 @@ test('real Bank metadata transfer cannot trick a full bag into merging a differe
   assert.equal(inv.getAddableAmount(new core.Item(currency,1)),0,'incoming default payment cannot merge with the bank-returned tagged currency');
   open(f,1468);const price=await refund(f,item),before=stock(f,gem),items=inv.getCopiedItems();await sale(f,item);
   assert.deepEqual(inv.getItems(),items,'refusal preserves all amounts and metadata');assert.equal(stock(f,gem),before);assert.equal(inv.getItems()[inv.getSlotForItemId(currency)],money);
-  await sale(f,item,4);assert.equal(inv.getAmount(item),0);assert.equal(inv.getAmount(currency),100+10*price);assert.equal(stock(f,gem),before+10);
+  await sale(f,item,4);assert.equal(inv.getAmount(item),0);assert.equal(inv.getAmount(currency),100+10*price);assert.equal(stock(f,gem),before);
   const paid=inv.getItems().filter(x=>x.getId()===currency);assert.equal(paid.length,2);assert.equal(money.getAmount(),100);assert.equal(money.getMeta()['capacity-test'],'separate');
 });
 

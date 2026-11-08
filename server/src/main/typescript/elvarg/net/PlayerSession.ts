@@ -604,7 +604,7 @@ export class PlayerSession {
         },
         player.getDisplayName(),
         player.getSkillManager().getCombatLevel(),
-        player.getSkillManager().getTotalLevel(),
+        0, // A zero skill level tells the client to display combat level.
         animations
       );
       this.appearanceCache.set(player.getIndex(), { player, payload });

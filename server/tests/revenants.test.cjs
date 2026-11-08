@@ -282,11 +282,11 @@ test("drop thresholds follow the Wiki's formula", () => {
   assert.deepEqual(Drops.thresholds(7), { A: 1100, B: 37 }, "imp: mostly coins");
 });
 
-test("every kill drops an even amount of ether in range; the rolls land in the right tables", () => {
+test("every kill drops a doubled amount of ether in range; the rolls land in the right tables", () => {
   for (let i = 0; i < 200; i++) {
     const [ether] = Drops.rollDrops({ npcId: 7940, combat: 135 });
     assert.equal(ether.itemId, ITEMS.ETHER);
-    assert.ok(ether.amount % 2 === 0 && ether.amount >= 2 && ether.amount <= 24, String(ether.amount));
+    assert.ok(ether.amount % 4 === 0 && ether.amount >= 4 && ether.amount <= 48, String(ether.amount));
   }
   const high = () => 0.999;
   const dragon = Drops.rollDrops({ npcId: 7940, combat: 135, random: high });

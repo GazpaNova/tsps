@@ -5,7 +5,7 @@
  "intervalJitterMinutes": 15,
  "firstLandingMinutes": [20, 50],
  "landingTicks": 4,
- "layerPercentTicks": 7,
+ "layerPercentTicks": 28,
  "headbar": { "id": 1, "width": 50 },
  "sizes": [
   { "size": 9, "loc": 41020, "gameval": "star_size_nine_star", "crashChance": 20 },

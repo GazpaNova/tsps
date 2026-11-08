@@ -10,6 +10,8 @@ const Bracelet = require("./Bracelet.Revenants");
 const Maledictus = require("./Maledictus.Revenants");
 const Revenants = require("./Common.Revenants");
 
+const { BAG_IDS, ownsLootingBag } = require("../../items/LootingBagOwnership");
+
 const AMULET_SLOT = 2;
 
 function isRevenant(npcId) {
@@ -38,6 +40,7 @@ function dropLoot({ killer, npc, npcId }) {
   const avarice = player.getEquipment().getItems()[AMULET_SLOT]?.getId?.() === ITEMS.AMULET_OF_AVARICE;
   const where = npc.getLocation().clone();
   for (const drop of drops) {
+    if (BAG_IDS.includes(drop.itemId) && ownsLootingBag(player)) continue;
     Revenants.api.emitCustomEvent("collection-log:obtain", { player, itemId: drop.itemId, amount: drop.amount });
     let amount = drop.amount;
     if (drop.itemId === ITEMS.ETHER) amount = Bracelet.absorbEther(player, amount);

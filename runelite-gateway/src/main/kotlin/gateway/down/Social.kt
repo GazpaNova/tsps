@@ -27,7 +27,6 @@ import net.rsprot.protocol.message.OutgoingGameMessage
 class Social(private val send: (OutgoingGameMessage) -> Unit) {
     private var loaded = false
     private var channel: Any? = null
-    private var messageCounter = 0
 
     fun handle(packet: TspsPacket): Boolean {
         val reader = packet.reader()
@@ -97,17 +96,22 @@ class Social(private val send: (OutgoingGameMessage) -> Unit) {
     fun chat(chat: TspsChatMessage): Boolean {
         val name = chat.from.replace(ICON, "")
         when (chat.type) {
-            PRIVATE_IN -> send(MessagePrivate(name, WORLD, ++messageCounter, chat.modIcon, chat.text))
+            PRIVATE_IN -> send(MessagePrivate(name, WORLD, messageCounter.incrementAndGet() and MESSAGE_COUNTER_MASK, chat.modIcon, chat.text))
             PRIVATE_OUT -> send(MessagePrivateEcho(name, chat.text))
-            FRIENDS_CHAT -> send(MessageFriendChannel(name, chat.prefix, WORLD, ++messageCounter, chat.modIcon, chat.text))
-            CLAN_CHAT -> send(MessageClanChannel(OWN_CLAN, name, WORLD, ++messageCounter, chat.modIcon, chat.text))
-            GUEST_CLAN_CHAT -> send(MessageClanChannel(GUEST_CLAN, name, WORLD, ++messageCounter, chat.modIcon, chat.text))
+            FRIENDS_CHAT -> send(MessageFriendChannel(name, chat.prefix, WORLD, messageCounter.incrementAndGet() and MESSAGE_COUNTER_MASK, chat.modIcon, chat.text))
+            CLAN_CHAT -> send(MessageClanChannel(OWN_CLAN, name, WORLD, messageCounter.incrementAndGet() and MESSAGE_COUNTER_MASK, chat.modIcon, chat.text))
+            GUEST_CLAN_CHAT -> send(MessageClanChannel(GUEST_CLAN, name, WORLD, messageCounter.incrementAndGet() and MESSAGE_COUNTER_MASK, chat.modIcon, chat.text))
             else -> return false
         }
         return true
     }
 
     private companion object {
+        // Native clients deduplicate chat by world and the 24-bit counter, including after relogging.
+        private const val MESSAGE_COUNTER_MASK = 0xFFFFFF
+        private val messageCounter = java.util.concurrent.atomic.AtomicInteger(
+            kotlin.random.Random.nextInt(MESSAGE_COUNTER_MASK + 1),
+        )
         const val PRIVATE_IN = 3
         const val PRIVATE_OUT = 6
         const val FRIENDS_CHAT = 9

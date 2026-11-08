@@ -62,8 +62,10 @@ function grant(player, villager) {
   const sticks = sticksFor(Favour.points(player));
   const item = Common.objId(Common.data.sticks.item);
   const inventory = player.getInventory();
-  const reward = new Common.core.Item(item, sticks);
-  if (inventory.getAddableAmount(reward) < sticks) {
+  const award = { player, minigame: "tai-bwo-wannai-cleanup", points: sticks };
+  Common.api.emitCustomEvent?.("minigame:points", award);
+  const reward = new Common.core.Item(item, award.points);
+  if (inventory.getAddableAmount(reward) < award.points) {
     player.sendMessage(Common.message("noRoom"));
     return;
   }
@@ -74,7 +76,7 @@ function grant(player, villager) {
   startCooldown(player, villager);
   const { DialogueChainBuilder, EndDialogue, ItemStatementDialogue } = Common.core;
   player.getDialogueManager().startDialogues(new DialogueChainBuilder().add(
-    new ItemStatementDialogue(0, item, Common.message("claimed", { sticks, favour: Favour.percentage(player) })),
+    new ItemStatementDialogue(0, item, Common.message("claimed", { sticks: award.points, favour: Favour.percentage(player) })),
     new EndDialogue(1),
   ));
 }

@@ -51,7 +51,7 @@ const SHARDS = { regular: [5, 9], corrupted: [7, 12] };
 // [item id, 1 in n]
 const TERTIARY = {
   regular: [[ID.CLUE_ELITE, 25], [ID.WEAPON_SEED, 120], [ID.ARMOUR_SEED, 120], [ID.ENHANCED_SEED, 2000], [ID.YOUNGLLEF, 2000]],
-  corrupted: [[ID.CLUE_ELITE, 20], [ID.WEAPON_SEED, 50], [ID.ARMOUR_SEED, 50], [ID.ENHANCED_SEED, 400], [ID.YOUNGLLEF, 800]],
+  corrupted: [[ID.CLUE_ELITE, 20], [ID.WEAPON_SEED, 50], [ID.ARMOUR_SEED, 50], [ID.ENHANCED_SEED, 200], [ID.YOUNGLLEF, 800]],
 };
 // Each 1/27.
 const INCOMPLETE = [

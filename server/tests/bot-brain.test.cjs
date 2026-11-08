@@ -952,7 +952,7 @@ const { SkillManager } = require('../dist/game/content/skill/SkillManager');
 test('a requested PvP profile and archetype reach the first kit before the bot joins the world', () => {
   const { createBotRegistry } = require('../plugins/bots/runtime/Registry.PlayerBots');
   const { assignPvpMetadata } = require('../plugins/bots/behaviours/pvp/PvpAssignment.PlayerBots');
-  let equipped, joined = false;
+  let equipped, joined = false, activity;
   const metadata = { profileId: 'elite', loadoutId: 'deep_wild_nh', generatedArchetypeId: 'elite_nh_ags',
     combatLevelRange: { min: 121, max: 126 } };
   const registry = createBotRegistry({
@@ -961,17 +961,18 @@ test('a requested PvP profile and archetype reach the first kit before the bot j
       World: { getPlayers: () => [], getAddPlayerQueue: () => [] },
     } }, botCount: 0, spawn: new Location(3423, 4120),
     behaviorMode: { PVP: 'pvp' }, worldGetPlayerByName: () => null,
-    createBotPlayer: (name, location) => ({ ...fakePlayer(name), getLocation: () => location }),
+    createBotPlayer: (name, location, options) => { activity = options.activity; return { ...fakePlayer(name), getLocation: () => location }; },
     createInitialState: () => ({ pvp: {} }), assignPvpMetadata,
     buildRoamingPvpMetadata: () => { throw new Error('an explicit kit must not be replaced by a random one'); },
     applyInitialPvpLoadout: (_, state) => { assert.equal(joined, false); equipped = state.pvp; return true; },
     emitPlayerLogin: () => { joined = true; }, ensureBehaviorTaskStarted() {},
   });
-  assert.ok(registry.spawnPvpBot(new Location(3423, 4120), { username: 'BhProfile', pvpMetadata: metadata }));
+  assert.ok(registry.spawnPvpBot(new Location(3423, 4120), { username: 'BhProfile', activity: 'bounty-hunter', pvpMetadata: metadata }));
   for (const key of ['profileId', 'loadoutId', 'generatedArchetypeId', 'combatLevelRange']) {
     assert.deepEqual(equipped[key], metadata[key], key);
   }
   assert.equal(joined, true);
+  assert.equal(activity, 'bounty-hunter', 'activity restriction reaches the factory');
   assignPvpMetadata({ pvp: equipped }, { metadata: { profileId: 'elite', loadoutId: 'deep_wild_nh' } });
   assert.equal(equipped.generatedArchetypeId, 'elite_nh_ags', 'ordinary reassignment preserves its chosen archetype');
 });

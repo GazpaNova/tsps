@@ -151,6 +151,9 @@ export function isValidChatChar(char: string): boolean {
         return true;
     }
 
+    // Spanish letters fit the existing single-byte chat protocol.
+    if ("\u00e1\u00e9\u00ed\u00f3\u00fa\u00fc\u00f1\u00c1\u00c9\u00cd\u00d3\u00da\u00dc\u00d1".includes(char)) return true;
+
     const allowed = " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
     return allowed.includes(char);
 }

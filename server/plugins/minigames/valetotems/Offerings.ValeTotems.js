@@ -59,12 +59,14 @@ function collect(player, site) {
     player.sendMessage("You don't have enough inventory space.");
     return;
   }
+  const award = { player, minigame: "vale-totems", points };
+  Shared.api().emitCustomEvent("minigame:points", award);
   Shared.animate(player, Shared.SEQ.CLAIM);
   Shared.sound(player, Shared.SOUND.CLAIM);
-  player.getInventory().adds(offeringsId(), points);
+  player.getInventory().adds(offeringsId(), award.points);
   player.getInventory().refreshItems();
   State.set(player, site, { points: 0 });
-  player.sendMessage(`You collect ${points} offerings.`);
+  player.sendMessage(`You collect ${award.points} offerings.`);
   Shared.api().emitCustomEvent("vale-totems:offerings-claimed", { player, site, points });
 }
 

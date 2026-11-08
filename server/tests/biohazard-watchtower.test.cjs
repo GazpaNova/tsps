@@ -58,6 +58,67 @@ function tick(player, count = 8) {
   }
 }
 
+test('Voidburn crossings wait for their animation, require the first-entry mask and advance only on arrival', () => {
+  const player = actor(4, 2561, 3266);
+  const cross = () => PluginManager.emitCustomEvent('npc-dialogue:action', {
+    player, npcId: core.NpcIdentifiers.OMART, stepId: 'v1MvBF'
+  });
+  cross();tick(player,3);
+  assert.equal(quest.getStage(player),4);
+  player.getEquipment().setItem(core.Equipment.HEAD_SLOT,new core.Item(core.ItemIdentifiers.GAS_MASK));
+  cross();cross();
+  assert.equal(quest.getStage(player),4);
+  assert.equal(player.getMovementQueue().isMovementBlocked(),true);
+  tick(player,3);
+  assert.equal(quest.getStage(player),5);
+  assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[2554,3266]);
+  assert.equal(player.getMovementQueue().isMovementBlocked(),false);
+  PluginManager.emitCustomEvent('npc-dialogue:action',{player,npcId:core.NpcIdentifiers.KILRON,stepId:'PIRzeQ'});
+  tick(player,3);
+  assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[2560,3266]);
+});
+
+test('Voidburn fence crossing does not pull a player back after interrupted travel', () => {
+  const player=actor(5,2540,3331);
+  const object=new core.GameObject(2068,new core.Location(2541,3331,0),0,2);
+  const event={player,object,objectId:2068,clickType:1,location:{x:2541,y:3331,z:0},option:'squeeze-through',handled:false};
+  PluginManager.emitObjectInteraction(event);
+  assert.equal(event.handled,true);
+  player.moveTo(new core.Location(3200,3200,0));tick(player,3);
+  assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[3200,3200]);
+  assert.equal(player.getMovementQueue().isMovementBlocked(),false);
+});
+
+test('HQ doorway and distillator cage enforce the gown and key, then permit actual passage', () => {
+ const player=actor(6,2551,3319);
+ const door=()=>PluginManager.emitCustomEvent('door:toggle',{player,objectId:2036,location:{x:2551,y:3320,z:0},handled:false});
+ door();tick(player,3);assert.equal(player.getLocation().getY(),3319);
+ player.getEquipment().setItem(core.Equipment.BODY_SLOT,new core.Item(core.ItemIdentifiers.MEDICAL_GOWN));
+ door();tick(player,3);assert.equal(player.getLocation().getY(),3321);
+ door();tick(player,3);assert.equal(player.getLocation().getY(),3319);
+ player.setLocation(new core.Location(2551,3320,0));
+ door();tick(player,3);assert.equal(player.getLocation().getY(),3321,'a routed click on the door anchor enters the room');
+ player.setLocation(new core.Location(2546,3325,1));
+ PluginManager.emitCustomEvent('door:toggle',{player,objectId:2034,location:{x:2547,y:3325,z:1},handled:false});
+ tick(player,3);assert.equal(player.getLocation().getX(),2548);
+ player.setLocation(new core.Location(2550,3326,1));
+ const gate=()=>PluginManager.emitCustomEvent('door:toggle',{player,objectId:2058,location:{x:2551,y:3326,z:1},handled:false});
+ gate();tick(player,3);assert.equal(player.getLocation().getX(),2550);
+ player.getInventory().adds(core.ItemIdentifiers.KEY_2,1);
+ gate();tick(player,3);assert.equal(player.getLocation().getX(),2552);
+ assert.equal(player.getInventory().getAmount(core.ItemIdentifiers.KEY_2),1);
+});
+
+test('door routing preserves the entry side even when the generic route would stand on its anchor', () => {
+ const player=actor(6,2550,3327,1);
+ const object=new core.GameObject(2034,new core.Location(2547,3325,1),0,0);
+ const event={player,object,objectId:2034,clickType:1,sourceLocation:{x:2550,y:3327,z:1},destination:null};
+ PluginManager.emitObjectRoute(event);
+ assert.deepEqual(event.destination,{x:2548,y:3325,z:1});
+ event.sourceLocation={x:2543,y:3326,z:1};event.destination=null;PluginManager.emitObjectRoute(event);
+ assert.deepEqual(event.destination,{x:2546,y:3325,z:1});
+});
+
 test("normal item-on-fence producer reaches the Biohazard transaction", () => {
   const player = actor();
   supplies(player);

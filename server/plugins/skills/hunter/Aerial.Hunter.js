@@ -58,7 +58,9 @@ function fish({ player, npc, npcId }) {
     const consume = bait === I.KING_WORM || count >= 4 || count === 3 && roll(0, 1) === 1;
     if (consume && !exchange(player, [[bait, 1]], [])) return;
     player.setAttribute("hunter.aerial-catches", consume ? 0 : count);
-    const fish = roll(1, 20000) === 1 ? I.GOLDEN_TENCH : def.item;
+    const unique = { player, minigame: "aerial-fishing", kind: "unique", multiplier: 1 };
+    H.api.emitCustomEvent("minigame:chance", unique);
+    const fish = roll(1, Math.max(1, Math.floor(20000 / unique.multiplier))) === 1 ? I.GOLDEN_TENCH : def.item;
     const blessing = [I.RADAS_BLESSING_1,I.RADAS_BLESSING_2,I.RADAS_BLESSING_3,I.RADAS_BLESSING_4]
       .findIndex(id => player.getEquipment().getItems().some(item => item?.getId() === id));
     const flakes = player.getInventory().contains(I.SPIRIT_FLAKES) && exchange(player, [[I.SPIRIT_FLAKES,1]], [[fish,2]], false);
@@ -67,7 +69,11 @@ function fish({ player, npc, npcId }) {
     const amount = doubled ? 2 : 1;
     if (!exchange(player, [], [[fish, amount]]) && fish === I.GOLDEN_TENCH) require("./Context.Hunter").drop(player, [[fish, amount]], player.getLocation());
     const denominator = Math.max(1, 100 - (combined - 40) * 25 / 59);
-    if (Math.random() < 1.5 / denominator && !exchange(player, [], [[I.MOLCH_PEARL, 1]])) require("./Context.Hunter").drop(player, [[I.MOLCH_PEARL, 1]], player.getLocation());
+    if (Math.random() < 1.5 / denominator) {
+      const award = { player, minigame: "aerial-fishing", points: 1 };
+      H.api.emitCustomEvent("minigame:points", award);
+      if (!exchange(player, [], [[I.MOLCH_PEARL, award.points]])) require("./Context.Hunter").drop(player, [[I.MOLCH_PEARL, award.points]], player.getLocation());
+    }
     for (const [tier, modifier] of [["BEGINNER",0.2],["EASY",1.7],["MEDIUM",2],["HARD",3.3],["ELITE",10]]) {
       if (require("./Context.Hunter").ownsClue(player,tier)) continue;
       // Content may make clue bottles commoner ("treasure-trails:vessel-chance", a league relic).

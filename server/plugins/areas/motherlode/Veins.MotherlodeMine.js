@@ -23,7 +23,7 @@ const VEIN_IDS = new Set(VEIN_FOR_DEPLETED.values());
  */
 const LIFESPAN = { lower: [38, 45], upper: [60, 67] };
 const RESPAWN = { lower: [159, 176], upper: [94, 101] };
-const PAY_DIRT_XP = 60;
+const PAY_DIRT_XP = 75; // Voidburn: +25%, before the global Mining XP rate.
 /** OpenRune's (ISC) pay-dirt roll. */
 const PAY_DIRT_CHANCE = { low: 60, high: 105 };
 const ANIMATION_TICKS = 3;
@@ -173,7 +173,7 @@ function awardPayDirt(player, vein, now) {
   player.getSkillManager().addExperiences(Skill.MINING, PAY_DIRT_XP * xp.multiplier);
   player.sendMessage("You manage to mine some pay-dirt.");
   player.getPacketSender().sendSound(PAY_DIRT_SOUND, 0, 0);
-  if (vein.depletesAt < 0) vein.depletesAt = now + random(vein.upper ? LIFESPAN.upper : LIFESPAN.lower);
+  // Voidburn: ore veins on both floors never start a depletion timer.
 }
 
 function tickMiner(player, mining, now) {

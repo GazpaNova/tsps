@@ -1,3 +1,4 @@
+const prayerXpMultiplier = require('../plugins/world/data/revenant-skill-rates.json').Prayer ?? 1;
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { before, after, test } = require('node:test');
@@ -237,7 +238,7 @@ test('native Giant bones Bury reaches the live ground-item listener and removes 
   assert.equal(groundEvents.length, 1);
   assert.equal(groundEvents[0].handled, true, messages.join(' | '));
   assert.equal(ground.isPendingRemoval(), true);
-  assert.equal(f.player.getSkillManager().getExperience(core.Skill.PRAYER) - beforeXp, 150);
+  assert.equal(f.player.getSkillManager().getExperience(core.Skill.PRAYER) - beforeXp, 150 * prayerXpMultiplier);
 });
 
 test('unknown named action is ignored even if it carries a valid op number', async t => {
@@ -282,7 +283,7 @@ test('native Bull bones Bury opens its confirmation and removes the private-area
   }), true);
   assert.equal(ground.isPendingRemoval(), true);
   assert.equal(otherGround.isPendingRemoval(), false);
-  assert.equal(f.player.getSkillManager().getExperience(core.Skill.PRAYER) - prayerXp, 40);
+  assert.equal(f.player.getSkillManager().getExperience(core.Skill.PRAYER) - prayerXp, 40 * prayerXpMultiplier);
 });
 
 test('named browser Giant bones Take reaches the pickup guard without removing the private stack', async t => {

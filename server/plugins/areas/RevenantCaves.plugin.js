@@ -103,6 +103,12 @@ function itemBox(player, itemId, text, then) {
 
 // ------------------------------------------------------------------ the entry fee
 
+/** Deployment override; zero disables charging, payment prompts and fee death loot. */
+function entryFee() {
+  const fee = Number(api.getPluginConfig?.("RevenantCaves:entryFee", FEE) ?? FEE);
+  return Number.isSafeInteger(fee) && fee >= 0 ? fee : FEE;
+}
+
 function feePaid(player) {
   return player.getAttribute(FEE_PAID_ATTRIBUTE) === true;
 }
@@ -112,6 +118,8 @@ function feePaid(player) {
  * other two are ours (docs/revenant-caves.md).
  */
 function payFee(player) {
+  const FEE = entryFee();
+  if (FEE === 0) return true;
   const inventory = player.getInventory();
   const bank = player.getBank(core.Bank.getTabForItem(player, COINS));
   const carried = Math.min(inventory.getAmount(COINS), FEE);
@@ -137,6 +145,10 @@ function enterCaves(player, entrance) {
 
 /** Paid: a message, and in a tick later. Not: the fee prompt, and in at once on paying. */
 function feeThenEnter(player, entrance) {
+  if (entryFee() === 0) {
+    enterCaves(player, entrance);
+    return;
+  }
   if (feePaid(player)) {
     player.sendMessage("You've already paid the Revenant Entry Fee.");
     later(player, 1, () => enterCaves(player, entrance));
@@ -148,8 +160,8 @@ function feeThenEnter(player, entrance) {
   }
   player.getPacketSender().sendVarbit(BUSY_VARBIT, 1);
   itemBox(player, COINS_ICON,
-    "You need to pay a 100,000 coins fee to enter the<br>Revenant Cave.<br>This can be taken from your inventory, bank or both.",
-    () => api.sendMultiChatboxPrompt(player, "Pay 100,000 coins Entry Fee?",
+    `You need to pay a ${entryFee().toLocaleString("en-US")} coins fee to enter the<br>Revenant Cave.<br>This can be taken from your inventory, bank or both.`,
+    () => api.sendMultiChatboxPrompt(player, `Pay ${entryFee().toLocaleString("en-US")} coins Entry Fee?`,
       "Yes.", () => payAndEnter(player, entrance, false),
       "Yes, don't ask again.", () => payAndEnter(player, entrance, true),
       "No.", () => player.getPacketSender().sendVarbit(BUSY_VARBIT, 0)));
@@ -284,6 +296,7 @@ function configOption({ player }) {
  * where they died.
  */
 function onDeath({ player, killer }) {
+  if (entryFee() === 0) return;
   if (!feePaid(player)) return;
   const location = player.getLocation();
   const byPlayer = !!killer?.isPlayer?.();
@@ -294,7 +307,7 @@ function onDeath({ player, killer }) {
   if (inside) player.sendMessage("You died to another player in the Revenant Cave, you've lost your entry fee.");
   // An Ironman killer takes no other player's loot: the fee drops for the victim (PlayerDeathTask.lootOwner).
   const owner = core.PlayerDeathTask.lootOwner(player, killer.getAsPlayer?.() ?? killer);
-  core.ItemOnGroundManager.registerLocation(owner, new core.Item(COINS, FEE), location.clone());
+  core.ItemOnGroundManager.registerLocation(owner, new core.Item(COINS, entryFee()), location.clone());
 }
 
 function sendStateOnLogin({ player }) {

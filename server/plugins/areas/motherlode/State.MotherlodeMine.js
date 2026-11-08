@@ -27,10 +27,10 @@ const SACK_TRANSMIT_MAX = 255;
 /**
  * What each pay-dirt washes into, rolled top-down until one succeeds (coal when none do). The
  * levels and bonus XP are the Wiki's; the success rates are OpenRune's (ISC), which give the
- * Wiki's 1/32 nugget rate at every level.
+ * base ore rates; Voidburn's nugget chance is tripled to 3/32 at every level.
  */
 const ORES = [
-  { key: "nugget", item: GOLDEN_NUGGET, level: PAY_DIRT_LEVEL, xp: 0, low: 7, high: 7 },
+  { key: "nugget", item: GOLDEN_NUGGET, level: PAY_DIRT_LEVEL, xp: 0, low: 23, high: 23 },
   { key: "runite", item: ItemIds.RUNITE_ORE, level: 85, xp: 75, low: -20, high: 5 },
   { key: "adamantite", item: ItemIds.ADAMANTITE_ORE, level: 70, xp: 45, low: -90, high: 50 },
   { key: "mithril", item: ItemIds.MITHRIL_ORE, level: 55, xp: 30, low: -19, high: 90 },

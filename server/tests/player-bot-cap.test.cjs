@@ -34,3 +34,46 @@ test('bots bypass a host-imposed human player cap while capacity still bounds th
   assert.equal(tiny.add(stubMobile(), true), true);
   assert.equal(tiny.add(stubMobile(), true), false, 'capacity still bounds bots');
 });
+
+test('the global no-bots switch also blocks direct minigame bot creation', () => {
+  const { Server } = require('../dist/Server');
+  Server.installProductionPathResolver();
+  const { createBotPlayer } = require('../plugins/bots/behaviours/spawn/PlayerFactory.PlayerBots');
+  const original = process.env.DISABLE_PLAYER_BOTS;
+  try {
+    process.env.DISABLE_PLAYER_BOTS = '1';
+    const options = new Proxy({}, { get() { assert.fail('disabled bot touched player/persistence setup'); } });
+    assert.equal(createBotPlayer('NoBots', null, options), null);
+  } finally {
+    if (original === undefined) delete process.env.DISABLE_PLAYER_BOTS;
+    else process.env.DISABLE_PLAYER_BOTS = original;
+  }
+});
+
+test('restricted bot creation allows only explicitly approved minigame activities', () => {
+  const { Server } = require('../dist/Server');
+  Server.installProductionPathResolver();
+  const { botCreationAllowed, createBotPlayer } = require('../plugins/bots/behaviours/spawn/PlayerFactory.PlayerBots');
+  const original = process.env.DISABLE_PLAYER_BOTS;
+  try {
+    process.env.DISABLE_PLAYER_BOTS = '0';
+    const api = { getPluginConfig: () => ['last-man-standing', 'bounty-hunter'] };
+    for (const activity of [undefined, 'pvp', 'wilderness', 'castle-wars', 'soul-wars', 'woodcutting']) {
+      assert.equal(botCreationAllowed({ api, activity }), false, String(activity));
+      assert.equal(createBotPlayer('BlockedBot', null, { api, activity }), null);
+    }
+    for (const activity of ['last-man-standing', 'bounty-hunter']) assert.equal(botCreationAllowed({ api, activity }), true);
+    assert.equal(botCreationAllowed({ api: { getPluginConfig: () => [] }, activity: 'last-man-standing' }), false);
+    process.env.DISABLE_PLAYER_BOTS = '1';
+    assert.equal(botCreationAllowed({ api, activity: 'last-man-standing' }), false, 'global shutdown still overrides exceptions');
+  } finally {
+    if (original === undefined) delete process.env.DISABLE_PLAYER_BOTS;
+    else process.env.DISABLE_PLAYER_BOTS = original;
+  }
+});
+
+test('restricted bot runtime never registers world-site spawners', () => {
+  const { startBotSites } = require('../plugins/bots/brain/SiteSpawner.PlayerBots');
+  const api = { getPluginConfig: () => ['last-man-standing', 'bounty-hunter'] };
+  startBotSites({ api, get runtime() { assert.fail('world-site setup must be skipped'); } });
+});

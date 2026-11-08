@@ -152,6 +152,32 @@ test('dying to a player since the last visit loses the fee to them', (t) => {
   assert.equal(away.attributes[Common.FEE_PAID_ATTRIBUTE], true);
 });
 
+test('free Wilderness boss and Escape Cave entry never charges or creates a deposit', (t) => {
+  t.mock.method(api, 'getPluginConfig', (key, fallback) => key === 'WildernessBosses:entryFee' ? 0 : fallback);
+  const player = fakePlayer(); // deliberately has no inventory, bank or payment dialogue
+  assert.equal(Caves.feeCost(player), 0);
+  for (const entrance of [...Common.LAIRS, ...Common.ESCAPE.entrances]) {
+    let entered = false;
+    Caves._test.feeThen(player, () => { entered = true; });
+    assert.equal(entered, true);
+    assert.notEqual(player.attributes[Common.FEE_PAID_ATTRIBUTE], true);
+    assert.equal(player.attributes[Common.FEE_AMOUNT_ATTRIBUTE], undefined);
+  }
+  assert.equal(Caves._test.payFee(player), true);
+  Caves._test.checkFee({ player });
+  assert.ok(player.sent.some(([kind, message]) => kind === 'message' && message === 'There is no entry fee for these caves.'));
+  const before = player.sent.length;
+  Caves.addDiscount(player);
+  assert.equal(player.sent.length, before, 'no discount notifications for free entry');
+  const drops = [];
+  t.mock.method(core.ItemOnGroundManager, 'registerLocation', (...args) => drops.push(args));
+  player.attributes[Common.FEE_PAID_ATTRIBUTE] = true;
+  player.attributes[Common.FEE_AMOUNT_ATTRIBUTE] = 50000;
+  player.attributes[Common.VISITED_ATTRIBUTE] = true;
+  Caves._test.playerDied({ player, killer: fakePlayer() });
+  assert.equal(drops.length, 0, 'disabled deposit must not pay out on death');
+});
+
 test('the bears\' crescent and the spiders\' shots splat when they land, not before (#1862)', () => {
   const Bears = require('../plugins/bosses/wildernessbosses/Bears.WildernessBosses');
   Bears.attach(api);

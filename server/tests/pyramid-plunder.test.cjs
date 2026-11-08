@@ -850,6 +850,18 @@ test("captured panel search: three pulls a tick apart, synth 1220 on the first a
 });
 
 
+test('Revenant doubles the sceptre roll without changing room loot or success chances', (t) => {
+  const chance = 1 / C.roomData(8).sceptre;
+  assert.equal(C.rollSceptre(8, () => chance * 1.5), false);
+  const handlers = new Map();
+  require('../plugins/world/RevenantMinigameRewards.plugin').register({ onCustomEvent: (name, fn) => handlers.set(name, fn) });
+  const api = C.getApi();
+  const original = api.emitCustomEvent;
+  t.mock.method(api, 'emitCustomEvent', (name, request) => { original?.(name, request); handlers.get(name)?.(request); });
+  assert.equal(C.rollSceptre(8, () => chance * 1.5), true);
+  assert.equal(C.rollSceptre(8, () => chance * 2), false);
+});
+
 // Native registered Simon offers, without the legacy inventory/dialogue/task stand-ins above.
 test("native Simon artefact sales preserve the full payment at the coin limit", async t => {
   process.env.DISABLE_PLAYER_BOTS = "1";

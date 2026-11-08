@@ -212,12 +212,11 @@ test('without Sins of the Father neither the stairs nor a shard lets you in', ()
   }
 });
 
-test('below 52 Agility the stairs refuse', () => {
-  const p = fakePlayer({ agility: 51 });
-  p.setAttribute(Common.data.attributes.tutorial, true);
-  click(p, Common.data.lobby.stairs);
-  assert.equal(Run.runOf(p), null);
-  assert.match(p.messages.at(-1), /Agility level of 52/);
+test('level 1 Agility can enter the Sepulchre', () => {
+  const p = fakePlayer({ agility: 1 });
+  const run = startRun(p);
+  assert.equal(run.floorNumber, 1);
+  run.finish();
 });
 
 test('floor 1: an instance of its source, the start tile, the layout varbits, 202 ticks', () => {
@@ -470,7 +469,7 @@ test("every drop lands by its face, the rule the unrecorded F4 north drop's land
 });
 
 test('a second click on the floor stairs, or an Exit meanwhile, credits nothing more', () => {
-  const p = fakePlayer();
+  const p = fakePlayer({ agility: 1 });
   const run = startRun(p, 0);
   run.pause();
   const stairs = locOf(run, 39622, [2274, 5983, 1]);
@@ -735,6 +734,26 @@ test("a trap's hold never carries to the next floor", () => {
   assert.equal(p.blocked, false);
   assert.equal(run.traps, null, "the old floor's traps are gone");
   run.finish();
+});
+
+test('Revenant doubles ring and lockpick odds, without extra coffin rolls', (t) => {
+  const Coffins = require('../plugins/minigames/hallowedsepulchre/Coffins.HallowedSepulchre');
+  const handler = new Map();
+  require('../plugins/world/RevenantMinigameRewards.plugin').register({ onCustomEvent: (name, fn) => handler.set(name, fn) });
+  const threshold = 1.5 / Common.data.loot.grand.ringChance;
+  t.mock.method(Math, 'random', () => threshold);
+  assert.equal(Coffins.grandLoot().some(([id]) => id === Common.data.loot.grand.ring), false);
+  const original = Common.api.emitCustomEvent.bind(Common.api);
+  t.mock.method(Common.api, 'emitCustomEvent', (name, request) => { original(name, request); handler.get(name)?.(request); });
+  const drops = Coffins.grandLoot();
+  assert.equal(drops.length, 3);
+  const [ordinaryId, minimum] = Common.data.loot.high[0];
+  assert.deepEqual(drops[1], [ordinaryId, minimum * 2]);
+  assert.deepEqual(drops[2], [Common.data.loot.grand.ring, 1]);
+  assert.ok(drops.some(([id]) => id === Common.data.loot.grand.ring));
+  const floor = 1;
+  t.mock.method(Math, 'random', () => 1.5 / Common.data.loot.lockpick[floor]);
+  assert.ok(Coffins.coffinLoot(floor).some(([id]) => id === Common.data.items.strangeLockpick));
 });
 
 test('native environmental recovery is faster with the equipped Hallowed ring', async (t) => {

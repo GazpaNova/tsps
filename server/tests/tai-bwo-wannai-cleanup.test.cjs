@@ -335,7 +335,7 @@ test('the first sticks come from Murcaily after a repair; then the others give; 
   assert.equal(p.getDialogueManager().getCurrent().constructor.name, 'NpcDialogue');
   const sticks = Villagers.sticksFor(600);
   continueAll(p);
-  assert.equal(p.getInventory().getAmount(obj('village_trade_sticks')), sticks);
+  assert.equal(p.getInventory().getAmount(obj('village_trade_sticks')), sticks * 3);
   assert.equal(Favour.points(p), 600 - sticks);
   assert.equal(varbit(p, 'chat_murc'), 7);
   assert.equal(varbit(p, 'cleanup_progress'), 5);

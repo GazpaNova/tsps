@@ -117,9 +117,8 @@
     "_points": "main points: health + 2 x shield damage; tertiary points: min(health, 400) + 2 x min(shield, 300)",
     "_calibrated": "the Wiki doesn't give how quantities scale with points: they run linearly from the table's minimum to its maximum at fullPoints",
     "fullPoints": 1300,
-    "uniqueChance": 200,
-    "seedWeight": 39,
-    "onyxWeight": 1,
+    "toolSeedChance": 100,
+    "onyxChance": 8000,
     "shardChance": [1500, 750],
     "petChance": 2250,
     "mvpBonus": 0.1

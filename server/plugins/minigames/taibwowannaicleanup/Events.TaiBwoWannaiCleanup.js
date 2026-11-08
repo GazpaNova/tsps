@@ -90,7 +90,9 @@ function disturb(player, jungle, object, location) {
   const live = Locs.find([Common.locId(jungle.locs[0]), Common.locId(jungle.locs[1]), Common.locId(jungle.locs[2]), Common.locId(jungle.locs[3])], object.getLocation());
   if (!live) return;
   shake(player, live);
-  if (Math.random() < goutChance(Common.level(player, "WOODCUTTING"))) return revealGout(player, jungle, live);
+  const unique = { player, minigame: "tai-bwo-wannai-cleanup", kind: "unique", multiplier: 1 };
+  Common.api.emitCustomEvent?.("minigame:chance", unique);
+  if (Math.random() < Math.min(1, unique.multiplier * goutChance(Common.level(player, "WOODCUTTING")))) return revealGout(player, jungle, live);
   const entry = pick();
   if (entry.key === "gemRock") return revealGemRock(player, jungle, live);
   say(player, entry);

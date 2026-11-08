@@ -83,6 +83,12 @@ const ESCAPE_EXITS = new Map(Common.ESCAPE.exits.map((exit) => [tileKey(exit.at)
 
 // ------------------------------------------------------------------ the fee
 
+/** All lairs and the Escape Caves share this configurable entrance deposit. */
+function baseFee() {
+  const fee = Number(api.getPluginConfig("WildernessBosses:entryFee", Common.DATA.fee));
+  return Number.isSafeInteger(fee) && fee >= 0 ? fee : Common.DATA.fee;
+}
+
 function feePaid(player) {
   return player.getAttribute(Common.FEE_PAID_ATTRIBUTE) === true;
 }
@@ -92,7 +98,7 @@ function discount(player) {
 }
 
 function feeCost(player) {
-  return Math.max(0, Common.DATA.fee - discount(player));
+  return Math.max(0, baseFee() - discount(player));
 }
 
 function sendFeeState(player) {
@@ -107,6 +113,7 @@ function sendFeeState(player) {
  * bank's and both's follow it (not captured).
  */
 function payFee(player) {
+  if (baseFee() === 0) return true;
   const cost = feeCost(player);
   const inventory = player.getInventory();
   const bank = player.getBank(core.Bank.getTabForItem(player, Common.COINS));
@@ -128,6 +135,10 @@ function payFee(player) {
 
 /** Paid, or "don't ask again": in. Otherwise the captured box, then the three-way prompt. */
 function feeThen(player, enter) {
+  if (baseFee() === 0) {
+    enter();
+    return;
+  }
   if (feePaid(player)) {
     enter();
     return;
@@ -157,9 +168,13 @@ function payAndEnter(player, enter, dontAskAgain) {
 }
 
 function checkFee({ player }) {
+  if (baseFee() === 0) {
+    player.sendMessage("There is no entry fee for these caves.");
+    return;
+  }
   const paid = feePaid(player);
   const off = discount(player);
-  const text = `The base entry fee for these caves is ${format(Common.DATA.fee)} coins,<br>`
+  const text = `The base entry fee for these caves is ${format(baseFee())} coins,<br>`
     + `${paid ? "which you have paid" : "which you have not paid"}. Killing wilderness bosses will<br>`
     + `reduce the fee by ${format(Common.DATA.discountPerKill)}. `
     + (off > 0 ? `You have a ${format(off)} discount<br>towards your next fee.` : "You have no discount<br>towards your next fee.");
@@ -172,6 +187,7 @@ function checkFee({ player }) {
  * message). Called by the bosses' loot.
  */
 function addDiscount(player) {
+  if (baseFee() === 0) return;
   const before = discount(player);
   if (before >= Common.DATA.maxDiscount) return;
   const after = Math.min(Common.DATA.maxDiscount, before + Common.DATA.discountPerKill);
@@ -326,6 +342,7 @@ function mapSquareChanged({ player }) {
 
 /** Killed by a player since the last visit: the fee is lost, and the killer gets it. */
 function playerDied({ player, killer }) {
+  if (baseFee() === 0) return;
   if (!feePaid(player) || !killer?.isPlayer?.()) return;
   if (player.getAttribute(Common.VISITED_ATTRIBUTE) !== true) return;
   const amount = Number(player.getAttribute(Common.FEE_AMOUNT_ATTRIBUTE)) || 0;
@@ -502,5 +519,5 @@ module.exports = {
   addDiscount,
   playersIn,
   feeCost,
-  _test: { ENTRANCES, EXITS, ESCAPE_ENTRANCES, ESCAPE_EXITS, ENTERED_AT_ATTRIBUTE, escapeArrival, payFee, meetsGate, teleportLocked, playerDied, lastExits, areas },
+  _test: { feeThen, checkFee, ENTRANCES, EXITS, ESCAPE_ENTRANCES, ESCAPE_EXITS, ENTERED_AT_ATTRIBUTE, escapeArrival, payFee, meetsGate, teleportLocked, playerDied, lastExits, areas },
 };

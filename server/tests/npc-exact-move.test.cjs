@@ -223,9 +223,9 @@ test('the attack timing hook lets an attack ignore the timer, or leave it as it 
   assert.deepEqual([boss.ignoreDelay, boss.keepDelay], [false, false]);
 });
 
-test('a player sees NPCs 15 tiles out unless an area widens it (up to 127, the large NPC update)', () => {
+test('Voidburn NPC visibility defaults to 52, preserves area overrides and clamps to the wire limit', () => {
   const { Player } = require('../dist/game/entity/impl/player/Player');
-  const player = { npcViewDistance: 15 };
+  const player = { npcViewDistance: 52 };
   const get = () => Player.prototype.getNpcViewDistance.call(player);
   const set = (distance) => Player.prototype.setNpcViewDistance.call(player, distance);
   set(32);
@@ -233,7 +233,7 @@ test('a player sees NPCs 15 tiles out unless an area widens it (up to 127, the l
   set(500);
   assert.equal(get(), 127);
   set(null);
-  assert.equal(get(), 15);
+  assert.equal(get(), 52);
 });
 
 test('idle NPC state stays unallocated until used and stays private to each actor', () => {

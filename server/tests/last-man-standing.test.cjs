@@ -76,14 +76,19 @@ test('points: the place, plus 2 for three kills or 3 for five (Wiki)', () => {
   assert.equal(Match.pointsFor(20, 1), 0);
 });
 
-test('results: a win from 499 is 508 and 6 points; 21st loses 5 rank and gets nothing (captured)', (t) => {
+test('results: Voidburn awards 4x LMS points while rank and ineligible rewards stay unchanged', (t) => {
   const winner = realPlayer(t);
   winner.setAttribute(Common.ATTRIBUTES.rank, 499);
   winner.setAttribute(Common.POINTS_ATTRIBUTE, 7);
   const game = { clock: 700, kills: new Map([[winner, 2]]), mode: Common.data.modes[1] };
   const won = Match.results(game, winner, 1, 'won');
   assert.equal(Common.rankOf(winner), 508);
-  assert.deepEqual(won, [[2, 'Your rank has increased!'], [3, 'You have earned <col=ef1020>6 points</col>. Total: <col=ef1020>13</col>.']]);
+  assert.deepEqual(won, [[2, 'Your rank has increased!'], [3, 'You have earned <col=ef1020>24 points</col>. Total: <col=ef1020>31</col>.']]);
+
+  assert.equal(Common.points(winner), 31);
+  const noKills = realPlayer(t);
+  Match.results({ clock: 700, kills: new Map(), mode: Common.data.modes[1] }, noKills, 1, 'won');
+  assert.equal(Common.points(noKills), 0, 'no kill still earns no points');
 
   const loser = realPlayer(t);
   loser.setAttribute(Common.ATTRIBUTES.rank, 500);
@@ -464,6 +469,21 @@ test('Justine\'s purchase: the set is added in full when the stack has the room,
   entered.execute(1);
   assert.equal(Common.points(p), 7);
   assert.equal(p.getInventory().getAmount(id('rune_arrow')), 2147483300);
+});
+
+test('LMS requests only its approved bot activity and holds bots in the waiting area', (t) => {
+  const Bots = require('../plugins/minigames/lms/Bots.LastManStanding');
+  const Lobby = require('../plugins/minigames/lms/Lobby.LastManStanding');
+  const { setActiveBotRuntime } = require('../plugins/bots/runtime/RuntimeRegistry.PlayerBots');
+  let request, blocked = false;
+  const bot = { setAttribute() {}, getMovementQueue: () => ({ setBlockMovement: value => { blocked = value; } }) };
+  setActiveBotRuntime({ spawnPvpBot(at, options) { request = options; return bot; } }, { PVP: 'pvp' });
+  t.after(() => setActiveBotRuntime(null, null));
+  t.mock.method(Lobby, 'follow', () => {});
+  t.mock.method(Stash, 'save', () => {});
+  assert.equal(Bots.spawnBot(new core.Location(3140, 3630)), bot);
+  assert.equal(request.activity, 'last-man-standing');
+  assert.equal(blocked, true);
 });
 
 test("Justine's purchase records its own collection-log items only when it succeeds", (t) => {

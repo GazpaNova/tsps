@@ -59,6 +59,7 @@ const DAMP_MESSAGE = "It's far too damp for you to light a fire here.";
 
 /** Captured: the first attack (and the boss HUD) comes four ticks after the spawn. */
 const ARM_TICKS = 4;
+const COMBAT_XP_MULTIPLIER = 1.35; // Voidburn: +35% damage-based combat XP.
 /** Captured (live, rev 241): the next Scurrius 29 ticks after the last one is gone, in 5 of 5 kills. */
 const RESPAWN_TICKS = 29;
 /** Captured: the HUD starts fading 4 ticks after he is gone (and clears 4 ticks after that). */
@@ -163,6 +164,7 @@ function spawnBoss(id, area) {
   const npc = api.spawnNpc({ id, x, y, z, wanderRadius: 0, unique });
   if (!npc) return null;
   npc.setFace(core.Direction.SOUTH);
+  npc.setCombatXpMultiplier(COMBAT_XP_MULTIPLIER);
   npc.__skipDefaultRespawn = true;
   npc.__scurriusArmedAt = core.World.getProcessCycle() + ARM_TICKS;
   npc.setMultiCombat?.(true);

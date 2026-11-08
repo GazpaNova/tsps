@@ -205,6 +205,7 @@ class GatewaySession(
             when (state) {
                 State.CLOSED, State.LOGGING_OUT -> Unit
                 State.IN_GAME -> close()
+                State.LOGGING_OUT -> Unit
                 else -> fail(LoginResponse.LoginServerOffline)
             }
         }

@@ -164,7 +164,7 @@ test("Mother's Magic Fossils: the Mage Training Arena's own points x2; the Mothe
   assert.equal(chance(owner, "fossil-island", "fossil"), 2);
   assert.equal(chance(others[1], "motherlode-mine", "golden-nugget"), 1);
   const Mine = require("../plugins/areas/motherlode/State.MotherlodeMine");
-  const nugget = Mine.successChance(7, 7, 60);
+  const nugget = Mine.successChance(23, 23, 60);
   const between = () => nugget * 1.5;
   assert.equal(Mine.rollOre(60, between).key !== "nugget", true, "past the usual nugget chance");
   assert.equal(Mine.rollOre(60, between, chance(owner, "motherlode-mine", "golden-nugget")).key, "nugget", "inside twice that chance");
@@ -180,4 +180,52 @@ test("Mother's Magic Fossils: the Mage Training Arena's own points x2; the Mothe
     core.ItemIdentifiers.UNIDENTIFIED_RARE_FOSSIL].includes(DriftNets.fossil(3, 14, 2)?.[0]), "inside twice them");
   Math.random = () => numulite * 1.5;
   assert.equal(DriftNets.fossil(3, 14, 2), null, "numulite's chance is not raised");
+});
+
+function revenantRewardHarness() {
+  const hooks = new Map();
+  const plugin = require('../plugins/world/RevenantMinigameRewards.plugin');
+  plugin.register({ onCustomEvent: (name, handler) => hooks.set(name, handler) });
+  return (name, request) => { hooks.get(name)?.(request); return request; };
+}
+
+test('Revenant earnings match XP rates, excluding combat, spending and refunds', () => {
+  const apply = revenantRewardHarness();
+  const groups = {
+    4: ['rooftop-agility','brimhaven-agility-arena','hallowed-sepulchre','volcanic-mine','shooting-stars','guardians-of-the-rift'],
+    3: ['forestry','tai-bwo-wannai-cleanup','giants-foundry','vale-totems','mahogany-homes','mastering-mixology','tithe-farm','tempoross','aerial-fishing','hunters-rumours','wintertodt','shades-of-mortton'],
+    2: ['gnome-restaurant','motherlode-mine','mage-training-arena'],
+    1: ['guardians-of-the-rift-pearls','pest-control','soul-wars','gauntlet','zalcano'],
+  };
+  for (const [multiplier, activities] of Object.entries(groups)) for (const minigame of activities) {
+    assert.equal(apply('minigame:points', { minigame, points: 7 }).points, 7 * Number(multiplier), minigame);
+    assert.equal(apply('minigame:points', { minigame, points: -7 }).points, -7, 'spending/refund must not multiply');
+    assert.equal(apply('minigame:points', { minigame, points: 0 }).points, 0);
+  }
+});
+
+test('Revenant doubled unique odds never stack with multiplied loot-search credits', () => {
+  const apply = revenantRewardHarness();
+  const boost = (minigame, kind = 'unique') => apply('minigame:chance', { minigame, kind, multiplier: 1 }).multiplier;
+  for (const activity of ['guardians-of-the-rift','tempoross','wintertodt','vale-totems','shades-of-mortton','hunters-rumours']) assert.equal(boost(activity), 1, activity);
+  for (const activity of ['hallowed-sepulchre','pyramid-plunder','fishing-trawler','gnome-restaurant','aerial-fishing','tai-bwo-wannai-cleanup']) assert.equal(boost(activity), 2, activity);
+  for (const activity of ['gauntlet','zalcano','barrows','chambers-of-xeric','tombs-of-amascut']) assert.equal(boost(activity), 1, activity);
+  assert.equal(boost('motherlode-mine', 'golden-nuggets'), 1, 'nuggets multiply in quantity, not chance');
+  assert.equal(boost('volcanic-mine', 'fossils'), 1, 'ordinary loot and fossil chances remain unchanged');
+});
+
+test('Tempoross scales newly earned permits but does not multiply balances or spending', () => {
+  const apply = revenantRewardHarness();
+  const Shared = require('../plugins/minigames/tempoross/Shared.Tempoross');
+  const Records = require('../plugins/minigames/tempoross/Records.Tempoross');
+  Shared.bind({ core, emitCustomEvent: apply });
+  const attributes = new Map();
+  const sender = new Proxy({}, { get: () => () => sender });
+  const player = { getAttribute: key => attributes.get(key), setAttribute: (key,value) => attributes.set(key,value), getPacketSender: () => sender };
+  Records.setPermits(player, 10);
+  Records.addPermits(player, 2);
+  assert.equal(Records.permits(player), 16);
+  assert.equal(Records.totalPermits(player), 6);
+  Records.setPermits(player, Records.permits(player) - 1);
+  assert.equal(Records.permits(player), 15);
 });

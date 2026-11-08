@@ -452,6 +452,24 @@ test('balance: an idle crew sinks before the end, a steady patcher lasts the who
   assert.equal(busy.contribution.get(player), Shared.DATA.points.max);
 });
 
+test('Revenant doubles angler and Heron rolls without inflating catch or contribution points', () => {
+  const handlers = new Map();
+  require('../plugins/world/RevenantMinigameRewards.plugin').register({ onCustomEvent: (name, fn) => handlers.set(name, fn) });
+  const old = Shared.api();
+  const events = [];
+  Shared.bind({ core, emitCustomEvent: (name, event) => { handlers.get(name)?.(event); events.push([name, event]); } });
+  try {
+    // No fish; one junk-count roll, followed by the angler roll at 1.5x its old chance.
+    const result = Rewards.rollCatch(0, 99, sequence([0, 1.5 / Shared.DATA.anglerChance, 0]));
+    assert.equal(result.angler.length, 1);
+    assert.equal(result.xp, 0);
+    const player = fakePlayer();
+    Rewards.award(player, { contribution: new Map([[player, Shared.DATA.points.max]]), shareFor: () => 0 }, () => 0.99);
+    const pet = events.find(([name]) => name === 'fishing:success');
+    assert.equal(pet[1].petChance, Shared.DATA.heron.fullMeterChance / 2);
+  } finally { Shared.bind(old); }
+});
+
 test('an angler piece is credited to the collection log when it reaches the bank', () => {
   const obtains = [];
   Shared.bind({ core, emitCustomEvent: (name, event) => { if (name === 'collection-log:obtain') obtains.push(event); } });
