@@ -82,3 +82,11 @@ No production SSH, server environment, passwords, tokens, private keys, player d
 - 26 checks in plague-city-progression.test.cjs and biohazard-watchtower.test.cjs passed with agent MCP disabled.
 - Local environment, cache, dependencies, tools and test saves are excluded from Git; working tree is clean after workflow documentation commit.
 - No production deployment, restart or GitHub push performed.
+
+## Deployed baseline update (2026-11-08)
+
+The reviewed Claude quest/trawler batch is live: commit 1e0728ac0ee9cb58058544e23eb61a2b2cf178ca. It includes Ava device purchases, Zanik visibility/landing, Plague City, Biohazard, Watchtower, Fishing Trawler and the related RFD Murphy routing. Production remains based on upstream 66541832b1, with the prior Voidburn customizations preserved.
+
+The later Friends Chat achievement-broadcast channel prefix is also synchronized into this development baseline. Production activation used one 60-second countdown and one restart; 1307 staged server checks, four browser test files and the gateway build/tests passed. All 15 batch source hashes were verified after restart. Local review also exercised the new Watchtower battlement/guard roles and shared Murphy/RFD paths.
+
+Exact OSRS visual/timing parity and an uninterrupted native-client completion of every changed quest are not claimed by these checks. Characters already stranded at an old bad landing should teleport out and repeat the step that took them there. Start new work from the updated voidburn/main; preserve existing fix branches when syncing.

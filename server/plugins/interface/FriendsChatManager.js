@@ -260,7 +260,7 @@ class FriendsChatManager {
         for (const member of channel.members.values()) {
             if (this.offlinePlayerIds.has(member.getIndex()) ||
                 member.getRelations().hasIgnore(player.getLongUsername())) continue;
-            this.notification(member, text);
+            this.notification(member, `[${channel.profile.channelName}] ${text}`);
         }
     }
     static handleWidgetAction(player, groupId, componentId, rawOption, rawOpId) {
