@@ -197,3 +197,30 @@ test("feed use allows the normal cage action once, with plane and repeat protect
   assert.equal(amount(player, cage), 1);
   assert.equal(amount(player, empty), 1);
 });
+
+test('the distillator gate opens from the tile right beside it, and the HQ back door stays locked', () => {
+ const player=actor(6,2551,3326,1);
+ player.getInventory().adds(core.ItemIdentifiers.KEY_2,1);
+ const object=new core.GameObject(2058,new core.Location(2551,3326,1),0,2);
+ const route={player,object,objectId:2058,clickType:1,sourceLocation:{x:2551,y:3326,z:1},destination:null};
+ PluginManager.emitObjectRoute(route);
+ assert.deepEqual(route.destination,{x:2551,y:3326,z:1},'its wall is on the east edge of 2551');
+ PluginManager.emitCustomEvent('door:toggle',{player,objectId:2058,location:{x:2551,y:3326,z:1},handled:false});
+ tick(player,3);assert.equal(player.getLocation().getX(),2552);
+ const inside=actor(7,2551,3327);
+ inside.getEquipment().setItem(core.Equipment.BODY_SLOT,new core.Item(core.ItemIdentifiers.MEDICAL_GOWN));
+ const back={player:inside,objectId:2036,location:{x:2551,y:3328,z:0},handled:false};
+ PluginManager.emitCustomEvent('door:toggle',back);tick(inside,3);
+ assert.equal(back.handled,true);assert.equal(inside.getLocation().getY(),3327);
+});
+
+test('the south-east Varrock guard searches at the gate before letting the player through', () => {
+ const player=actor(12,3263,3405);
+ const gate={player,objectId:2050,location:{x:3264,y:3405,z:0},handled:false};
+ PluginManager.emitCustomEvent('door:toggle',gate);
+ assert.equal(gate.handled,true);tick(player,3);
+ assert.equal(player.getLocation().getX(),3263,'still outside while being searched');
+ PluginManager.emitCustomEvent('npc-dialogue:line',{player,npcId:core.NpcIdentifiers.GUARD_19,text:'You may now pass.'});
+ tick(player,3);
+ assert.equal(player.getLocation().getX(),3264);
+});

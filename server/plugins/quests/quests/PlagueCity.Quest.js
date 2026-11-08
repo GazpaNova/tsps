@@ -93,7 +93,11 @@ module.exports = function registerPlagueCityQuest(api) {
   const MANHOLE_OPEN_ID = 2544;
   const HOUSE_STAIRS_DOWN_ID = 2522;
   const HOUSE_STAIRS_UP_ID = 2523;
-  const SCENE_ANIM = { dig: 830, climb: 828, down: 827, pipe: 3195, pull: 3192 };
+  // Doors and stairs carry the player across with no animation (null); 828 is a ladder climb.
+  const SCENE_ANIM = { dig: 830, climb: 828, down: 827, pipe: 3195, pull: 3192, none: null };
+  // The rope runs from the pipe grill (2514,9739); pull it from the tile north of the grill.
+  const PULL_TILE = [2514, 9740, 0];
+  const GRILL_TILE = [2514, 9739, 0];
   const GARDEN_LANDING = [2566, 3333, 0];
   const TUNNEL_LANDING = [2518, 9758, 0];
   const PIPE_LANDING = [2529, 3304, 0];
@@ -101,6 +105,11 @@ module.exports = function registerPlagueCityQuest(api) {
   const scenes = new WeakMap();
 
   const pendingDoors = new WeakMap();
+  // Talking to Elena through the locked cell door plays the locked-door transcript without
+  // its opening "The door is locked." message (step Gtrtgc), which belongs to the door.
+  const ELENA_LOCKED_VARIANT = "freeing-elena-attempting-to-open-the-basement-door-of-the-plague-house-without-the-key";
+  const DOOR_LOCKED_MESSAGE_STEP = "Gtrtgc";
+  const talkingThroughBars = new WeakSet();
 
   let quest;
 
@@ -288,7 +297,11 @@ module.exports = function registerPlagueCityQuest(api) {
         quest.setStage(player, STAGE_FREED_ELENA);
         return "freeing-elena-talking-to-elena-after-unlocking-the-basement-door";
       }
-      if (stage < STAGE_FREED_ELENA) return null;
+      // Still locked in: her Plague City plea, never the generic "Elena" page (Song of the Elves).
+      if (stage < STAGE_FREED_ELENA) {
+        talkingThroughBars.add(player);
+        return ELENA_LOCKED_VARIANT;
+      }
       return "freeing-elena-talking-to-elena-after-unlocking-the-basement-door";
     }
     return null;
@@ -320,7 +333,13 @@ module.exports = function registerPlagueCityQuest(api) {
     if (quest.getStage(player) < STAGE_FIND_DWELLBERRIES) quest.setStage(player, STAGE_FIND_DWELLBERRIES);
   }
 
-  function handleAction({ player, npcId, stepId }) {
+  function handleAction(event) {
+    const { player, npcId, stepId } = event;
+    if (stepId === DOOR_LOCKED_MESSAGE_STEP && talkingThroughBars.has(player)) {
+      talkingThroughBars.delete(player);
+      event.handled = true;
+      return;
+    }
     const stage = quest.getStage(player);
     const inventory = player.getInventory();
     if (ALRENA_NPC_IDS.has(npcId) && stepId === "Br9tOd" && stage === STAGE_FIND_DWELLBERRIES && held(player, DWELLBERRIES_ITEM_ID)) {
@@ -374,7 +393,7 @@ module.exports = function registerPlagueCityQuest(api) {
     if (objectId === ObjectIdentifiers.DOOR_80 && location.x === 2530 && location.y === 3314 && location.z === 0 && stage >= STAGE_CLERK_PERMISSION) {
       event.handled = true;
       const leaving = player.getLocation().getX() >= 2531;
-      scene(player, SCENE_ANIM.climb, 2, () => move(player, [leaving ? 2529 : 2531,3314,0]));
+      scene(player, SCENE_ANIM.none, 1, () => move(player, [leaving ? 2529 : 2531,3314,0]));
       return;
     }
     if (objectId === ObjectIdentifiers.DOOR_80 && location.x === 2530 && location.y === 3314 && location.z === 0 && stage < STAGE_CLERK_PERMISSION) {
@@ -406,10 +425,11 @@ module.exports = function registerPlagueCityQuest(api) {
         player.setAttribute(CELL_UNLOCKED_ATTRIBUTE, true);
         event.handled = true;
         const leaving = player.getLocation().getX() >= 2540;
-        scene(player, SCENE_ANIM.climb, 2, () => move(player, [leaving ? 2538 : 2540,9672,0]));
+        scene(player, SCENE_ANIM.none, 1, () => move(player, [leaving ? 2538 : 2540,9672,0]));
       } else {
         event.handled = true;
-        startTranscript(api, player, NpcIdentifiers.ELENA_2, "Plague City", "freeing-elena-attempting-to-open-the-basement-door-of-the-plague-house-without-the-key");
+        talkingThroughBars.delete(player);
+        startTranscript(api, player, NpcIdentifiers.ELENA_2, "Plague City", ELENA_LOCKED_VARIANT);
       }
     }
   }
@@ -579,7 +599,7 @@ module.exports = function registerPlagueCityQuest(api) {
     const start = player.getLocation().clone();
     scenes.set(player, token);
     movement.reset().setBlockMovement(true);
-    player.performAnimation(new api.core.Animation(animation));
+    if (animation !== null) player.performAnimation(new api.core.Animation(animation));
     api.getTaskManager().submit(new class extends api.core.Task {
       constructor() { super(1, player, false); this.remaining = ticks; }
       execute() {
@@ -642,6 +662,10 @@ module.exports = function registerPlagueCityQuest(api) {
   function eventPullGrill(player) {
     const at = player.getLocation();
     if (at.getZ() !== 0 || at.getX() < 2506 || at.getX() > 2532 || at.getY() < 9737 || at.getY() > 9781) return;
+    // Edmond is talked to back at the mud pile; the pull happens at the grill, not where he stands.
+    if (scenes.has(player) || player.getMovementQueue().isMovementBlocked()) return;
+    move(player, PULL_TILE);
+    player.setPositionToFace(new api.core.Location(...GRILL_TILE));
     scene(player, SCENE_ANIM.pull, 3, () => {
       if (quest.getStage(player) === STAGE_ROPE_TIED) {
         quest.setStage(player, STAGE_PIPE_OPEN);
@@ -693,7 +717,7 @@ module.exports = function registerPlagueCityQuest(api) {
     }
     const to = west ? [leaving ? 2532 : 2534,3272,0] : [2540,leaving ? 3274 : 3272,0];
     // Cross only this player. Never replace the shared door's per-player morph.
-    scene(player, SCENE_ANIM.climb, 2, () => move(player, to));
+    scene(player, SCENE_ANIM.none, 1, () => move(player, to));
     return true;
   }
 
@@ -704,7 +728,7 @@ module.exports = function registerPlagueCityQuest(api) {
     if (location.z !== 0 || (!down && !up)) return false;
     event.handled = true;
     if (down && quest.getStage(player) < STAGE_HAVE_WARRANT) return true;
-    scene(player, down ? SCENE_ANIM.down : SCENE_ANIM.climb, 2, () => move(player, down ? [2537,9670,0] : [2538,3269,0]));
+    scene(player, SCENE_ANIM.none, 1, () => move(player, down ? [2537,9670,0] : [2538,3269,0]));
     return true;
   }
 

@@ -240,7 +240,9 @@ module.exports = function registerDeathToTheDorgeshuunQuest(api) {
   const LUMBRIDGE_ZONE = { minX: 3190, maxX: 3270, minY: 3185, maxY: 3265 };
 
   const HIDDEN_TRAPDOOR_TILE = { x: 3166, y: 9622 };
-  const STORE_ROOM_TILE = { x: 2566, y: 5186 };
+  // The store room's Climb-up ladder (loc 15747) is at 2567,5185 in a one-tile
+  // corridor; land on the open tile east of it. 2566,5186 is solid rock.
+  const STORE_ROOM_TILE = { x: 2568, y: 5185 };
   const MILL_TRAPDOOR_TILE = { x: 3230, y: 3286 };
   const MILL_CELLAR_TILE = { x: 3217, y: 9692 };
   const JAIL_TILE = { x: 3184, y: 9612 };
@@ -1347,11 +1349,15 @@ module.exports = function registerDeathToTheDorgeshuunQuest(api) {
     placeTourGoblin(player);
   }
 
-  /** Cache NPC 4507 (the cellar Zanik parent) only resolves once this bit is set. */
+  /**
+   * Cache NPC 4507 (the cellar Zanik parent) only resolves once this bit is set.
+   * She waits in the cellar only until she takes the robes; from then on the
+   * owner-only follower is Zanik, so keeping the bit set left a second Zanik.
+   */
   function syncCellarVarbit(player) {
     player
       .getPacketSender()
-      .sendVarbit(VARBIT_DTTD_ZANIK_IN_CELLAR, quest.getStage(player) >= STAGE_STARTED ? 1 : 0);
+      .sendVarbit(VARBIT_DTTD_ZANIK_IN_CELLAR, quest.getStage(player) === STAGE_STARTED ? 1 : 0);
   }
 
   function handleBootstrap({ player }) {

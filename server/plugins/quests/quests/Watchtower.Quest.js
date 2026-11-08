@@ -103,8 +103,18 @@ module.exports = function registerWatchtowerQuest(api) {
   const TOBAN_ID = NpcIdentifiers.TOBAN;
   const GORAD_ID = NpcIdentifiers.GORAD;
   const ENTRANCE_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_3, NpcIdentifiers.OGRE_GUARD_5]);
-  const SOUTHERN_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_6]);
-  const MARKET_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_7]);
+  // The two OGRE_GUARD_6s (2501/2503,3011-3012) stand at the battlement and want a gift from
+  // the market (a rock cake) before letting the player climb it. The OGRE_GUARD_7s by the market
+  // (2526/2529,3018-3019) only say "What do you want, small thing? Leave us alone!".
+  const SOUTHERN_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_7]);
+  const MARKET_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_6]);
+  const BATTLEMENT_GUARD_ID = NpcIdentifiers.OGRE_GUARD_6;
+  /** The battlement (2832) blocks the west end of the rope bridge at x 2507, y 3011-3012. */
+  const BATTLEMENT_ID = ObjectIdentifiers.BATTLEMENT;
+  const BATTLEMENT = { x: 2507, minY: 3011, maxY: 3012 };
+  const CLIMB_OVER_ANIMATION = 839;
+  /** "The ogre guard attacks the player." in the battlement guard's dialogue. */
+  const BATTLEMENT_GUARD_ATTACK_ID = "WdYOsW";
   const BRIDGE_GUARD_IDS = new Set([NpcIdentifiers.OGRE_GUARD_4]);
   // The live east-gate guards are OGRE_GUARD_4 spawns; the wiki lets a gold bar
   // be given to one of them directly, as well as clicking the gate.
@@ -1141,6 +1151,10 @@ module.exports = function registerWatchtowerQuest(api) {
 
   function handleAction(event) {
     if (!event.player || !event.stepId) return;
+    if (event.stepId === BATTLEMENT_GUARD_ATTACK_ID) {
+      event.npc?.getCombat?.()?.attack(event.player);
+      return;
+    }
     if (event.kind === "message") {
       handleMessage(event);
       return;
@@ -1321,9 +1335,48 @@ module.exports = function registerWatchtowerQuest(api) {
     });
   }
 
+  /**
+   * Climbing the battlement: the guards stop the player until they have been given a rock cake
+   * (wiki: "Try to climb the battlement and you will be stopped by one of the guards").
+   */
+  function climbBattlement(event) {
+    const { player, object } = event;
+    const at = object?.getLocation?.();
+    if (!at || at.getX() !== BATTLEMENT.x || at.getY() < BATTLEMENT.minY || at.getY() > BATTLEMENT.maxY || at.getZ() !== 0) return;
+    event.handled = true;
+    if (ObstacleRunner.isBusy(player)) return;
+    const from = player.getLocation();
+    const fromWest = from.getX() < BATTLEMENT.x;
+    const allowed = !fromWest || quest.isComplete(player) || hasBit(player, BIT_MARKET_GIVEN);
+    if (!allowed) {
+      if (quest.getStage(player) < STAGE_GIVEN_RELIC) {
+        startTranscript(api, player, BATTLEMENT_GUARD_ID, PAGE, "entering-gu-tanoth-talking-to-the-southern-ogre-guard");
+        return;
+      }
+      const first = !hasBit(player, BIT_MARKET_WANTS);
+      setBit(player, BIT_MARKET_WANTS);
+      startTranscript(api, player, BATTLEMENT_GUARD_ID, PAGE, first
+        ? "entering-gu-tanoth-ogre-guard"
+        : "entering-gu-tanoth-ogre-guard-talking-to-the-ogre-guard-again");
+      return;
+    }
+    const y = Math.min(BATTLEMENT.maxY, Math.max(BATTLEMENT.minY, from.getY()));
+    const start = [fromWest ? BATTLEMENT.x - 1 : BATTLEMENT.x + 1, y];
+    const end = [fromWest ? BATTLEMENT.x + 1 : BATTLEMENT.x - 1, y];
+    ObstacleRunner.run({ player, object }, [
+      { walk: [start], arrive: true },
+      { faceDir: fromWest ? "east" : "west" },
+      { move: end, anim: CLIMB_OVER_ANIMATION, speed: [0, 60], ticks: 1 },
+    ]);
+  }
+
   function handleObjectInteraction(event) {
     const { player, objectId } = event;
     if (!player) return;
+    if (objectId === BATTLEMENT_ID) {
+      climbBattlement(event);
+      return;
+    }
     if (objectId === ObjectIdentifiers.ROPESWING_9 && (event.option === "Swing-on" || event.clickType === 1)) {
       crossGrewRiver(event, false);
       return;
@@ -1455,6 +1508,15 @@ module.exports = function registerWatchtowerQuest(api) {
     const { player, itemId } = event;
     const targetId = event.npcId ?? event.target?.getId?.();
     if (!player || !targetId) return;
+
+    // Wiki: "Use the rock cake on the guard to get by" - the guard's hand-in conversation.
+    if (MARKET_GUARD_IDS.has(targetId) && itemId === ROCK_CAKE && quest.getStage(player) >= STAGE_GIVEN_RELIC
+        && !hasBit(player, BIT_MARKET_GIVEN)) {
+      event.handled = true;
+      setBit(player, BIT_MARKET_WANTS);
+      startTranscript(api, player, BATTLEMENT_GUARD_ID, PAGE, "entering-gu-tanoth-ogre-guard-talking-to-the-ogre-guard-again");
+      return;
+    }
 
     if (EAST_GATE_GUARD_IDS.has(targetId) && itemId === GOLD_BAR) {
       event.handled = true;

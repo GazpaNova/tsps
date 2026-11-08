@@ -114,6 +114,29 @@ module.exports = function registerBiohazardQuest(api) {
 
   const WEST_ARDOUGNE_LANDING = new Location(2554, 3266, 0);
   const EAST_ARDOUGNE_LANDING = new Location(2560, 3266, 0);
+  // The wall itself is the cache's 2557-2558 column at y 3266. Omart and Kilron wander, so the
+  // rope-ladder climb starts from the tile against the wall, facing it, not wherever they stand.
+  const WALL_EAST_FOOT = new Location(2559, 3266, 0);
+  const WALL_WEST_FOOT = new Location(2556, 3266, 0);
+  const WALL_EAST_FACE = new Location(2558, 3266, 0);
+  const WALL_WEST_FACE = new Location(2557, 3266, 0);
+  /** Mourner HQ: ground floor and upstairs share this box; the front door is south, the back door north. */
+  const MOURNER_HQ = { minX: 2542, maxX: 2557, minY: 3321, maxY: 3327 };
+  const HQ_FRONT_DOOR_Y = 3320;
+  const HQ_BACK_DOOR_Y = 3328;
+  const HQ_TRAPDOOR_ID = 8783;
+  const HQ_TRAPDOOR = { x: 2542, y: 3327 };
+  /** The mourner on guard at the front door (spawn 9227 resolves to 9004). */
+  const HQ_DOOR_MOURNER_NPC_ID = NpcIdentifiers.MOURNER_12;
+  /** The cage gate's wall runs along the east edge of x 2551: 2551 is its west side, 2552 the distillator room. */
+  const CAGE_GATE_WEST_X = 2551;
+  const CAGE_GATE_EAST_X = 2552;
+  /** South-east Varrock's gate (2050/2051) on the west edge of x 3264; its guard stands outside. */
+  const VARROCK_GATE_IDS = new Set([2050, 2051]);
+  const VARROCK_GATE = { x: 3264, minY: 3405, maxY: 3406 };
+  const GUARD_PASS_LINE = "You may now pass.";
+  /** "(Mourner attacks the player.)" in each of the sickest mourner's three answers. */
+  const SICKEST_MOURNER_ATTACK_IDS = new Set(["DQWtoR", "MoUbVk", "PmbGHX"]);
   const WATCHTOWER_TILE = { x: 2562, y: 3301 };
   const MOURNER_YARD = { minX: 2542, maxX: 2555, minY: 3328, maxY: 3333 };
   const VARROCK_SOUTH_EAST_ZONE = { minX: 3265, maxX: 3287, minY: 3376, maxY: 3407 };
@@ -214,7 +237,8 @@ module.exports = function registerBiohazardQuest(api) {
     } else if (event.objectId === MOURNER_HQ_DOOR_ID && x === 2551 && [3320,3328].includes(y) && z === 0) {
       event.destination = {x,y:from.y > y ? y + 1 : y - 1,z};
     } else if (MOURNER_CAGE_GATE_IDS.has(event.objectId) && x === 2551 && [3325,3326].includes(y) && z === 1) {
-      event.destination = {x:from.x >= 2551 ? 2552 : 2550,y,z};
+      // Its wall is on the east edge of x 2551, so 2551 itself is the west side.
+      event.destination = {x:from.x >= CAGE_GATE_EAST_X ? CAGE_GATE_EAST_X : CAGE_GATE_WEST_X,y,z};
     } else if (event.objectId === MOURNER_FENCE_OBJECT_ID && x === 2541 && y === 3331 && z === 0) {
       event.destination = {x:from.x >= 2542 ? 2542 : 2540,y,z};
     }
@@ -226,7 +250,9 @@ module.exports = function registerBiohazardQuest(api) {
     const token = {}, origin = player.getLocation().clone();
     travelScenes.set(player, token);
     movement.reset().setBlockMovement(true);
-    player.performAnimation(new api.core.Animation(animation));
+    // Doors and gates pass with no animation (null). A climb is replayed on the next tick so a
+    // conversation line opened by the same action can't swallow it.
+    if (animation !== null) player.performAnimation(new api.core.Animation(animation));
     api.getTaskManager().submit(new class extends api.core.Task {
       constructor() { super(1, player, false); this.remaining = 3; }
       execute() {
@@ -234,12 +260,30 @@ module.exports = function registerBiohazardQuest(api) {
         if (!player.isRegistered() || player.isDying || player.getHitpoints() <= 0 || !player.getLocation().equals(origin)) {
           cancelTravel({ player }); this.stop(); return;
         }
+        if (this.remaining === 3 && animation !== null) player.performAnimation(new api.core.Animation(animation));
         if (--this.remaining > 0) return;
         try { player.moveTo(destination); arrive?.(); }
         finally { cancelTravel({ player }); this.stop(); }
       }
     }());
   }
+
+  /** The rope ladder over the wall, from the foot of the wall on the player's side. */
+  function climbWall(player, westward, arrive) {
+    const movement = player.getMovementQueue();
+    if (travelScenes.has(player) || movement.isMovementBlocked() || player.isDying || player.getHitpoints() <= 0) return;
+    player.moveTo((westward ? WALL_EAST_FOOT : WALL_WEST_FOOT).clone());
+    player.setPositionToFace(westward ? WALL_EAST_FACE : WALL_WEST_FACE);
+    crossObstacle(player, westward ? WEST_ARDOUGNE_LANDING : EAST_ARDOUGNE_LANDING, LADDER_ANIMATION, arrive);
+  }
+
+  const inZoneBox = (location, box, z = null) => {
+    const x = location.getX?.() ?? location.x, y = location.getY?.() ?? location.y, plane = location.getZ?.() ?? location.z;
+    return x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY && (z === null || plane === z);
+  };
+  const insideMournerHq = (player) => inZoneBox(player.getLocation(), MOURNER_HQ);
+  /** Players the Varrock guard has just searched at the gate; the zone entry doesn't search again. */
+  const searchedAtGate = new WeakSet();
 
   const held = (player, itemId) => player.getInventory().getAmount(itemId) > 0;
   const hasAllVials = (player) =>
@@ -607,8 +651,22 @@ module.exports = function registerBiohazardQuest(api) {
     if (VARROCK_COURIERS.has(npcId)) {
       return varrockCourierVariant(stage, player, VARROCK_COURIERS.get(npcId));
     }
+    if (npcId === SICKEST_MOURNER_NPC_ID) {
+      if (stage < STAGE_POISONED_STEW) return null;
+      return held(player, MOURNER_KEY_ITEM_ID) || stage >= STAGE_FOUND_DISTILLATOR
+        ? "infiltrating-the-mourner-hq-talking-to-sickest-mourner-upstairs-talking-to-sickest-mourner-again-while-holding-the-key"
+        : "infiltrating-the-mourner-hq-talking-to-sickest-mourner-upstairs";
+    }
     if (MOURNER_NPC_IDS.has(npcId)) {
       if (stage < STAGE_CLIMBED_LADDER) return null;
+      if (stage >= STAGE_POISONED_STEW && insideMournerHq(player)) {
+        return stage >= STAGE_FOUND_DISTILLATOR || held(player, DISTILLATOR_ITEM_ID)
+          ? "infiltrating-the-mourner-hq-talking-to-mourner-inside-mourner-headquarters-after-getting-distillator"
+          : "infiltrating-the-mourner-hq-talking-to-mourner-inside-mourner-headquarters";
+      }
+      if (stage === STAGE_POISONED_STEW && wearingMedicalGown(player)) {
+        return "infiltrating-the-mourner-hq-talking-to-mourner-outside-mourner-headquarters-while-wearing-gown";
+      }
       if (stage === STAGE_POISONED_STEW) {
         return "infiltrating-the-mourner-hq-talking-to-mourner-outside-mourner-headquarters-after-poisoning-the-stew";
       }
@@ -687,6 +745,11 @@ module.exports = function registerBiohazardQuest(api) {
   function handleAction(event) {
     const { player, npcId, stepId, text } = event;
     if (!player) return;
+    if (npcId === SICKEST_MOURNER_NPC_ID && SICKEST_MOURNER_ATTACK_IDS.has(stepId)) {
+      // "You're no doctor!" - he attacks; killing him drops the cage key.
+      event.npc?.getCombat?.()?.attack(player);
+      return;
+    }
     if (stepId === COMPLETE_ACTION_ID && KING_LATHAS_NPC_IDS.has(npcId)) {
       if (quest.getStage(player) >= STAGE_REPORTED_TO_ELENA && !quest.isComplete(player)) {
         quest.complete(player);
@@ -700,13 +763,13 @@ module.exports = function registerBiohazardQuest(api) {
         player.sendMessage("You should put on your gas mask before crossing into West Ardougne.");
         return;
       }
-      crossObstacle(player, WEST_ARDOUGNE_LANDING, LADDER_ANIMATION, () => {
+      climbWall(player, true, () => {
         if (quest.getStage(player) === STAGE_RELEASED_PIGEONS) quest.setStage(player, STAGE_CLIMBED_LADDER);
       });
       return;
     }
     if (KILRON_NPC_IDS.has(npcId) && stepId === "PIRzeQ") {
-      if (quest.getStage(player) >= STAGE_CLIMBED_LADDER) crossObstacle(player, EAST_ARDOUGNE_LANDING, LADDER_ANIMATION);
+      if (quest.getStage(player) >= STAGE_CLIMBED_LADDER) climbWall(player, false);
       return;
     }
     if (ELENA_NPC_IDS.has(npcId) && stepId === "Vpxjql") {
@@ -935,27 +998,45 @@ module.exports = function registerBiohazardQuest(api) {
     const y = location.getY?.() ?? location.y;
     const z = location.getZ?.() ?? location.z;
     const upstairs = objectId === MOURNER_UPSTAIRS_DOOR_ID && x === 2547 && y === 3325 && z === 1;
-    if (!upstairs && !(objectId === MOURNER_HQ_DOOR_ID && x === 2551 && [3320,3328].includes(y) && z === 0)) return false;
-    if (quest.getStage(player) < STAGE_POISONED_STEW) {
-      event.handled = true;
-      player.sendMessage("The mourner guards will not let you in.");
+    if (!upstairs && !(objectId === MOURNER_HQ_DOOR_ID && x === 2551 && [HQ_FRONT_DOOR_Y,HQ_BACK_DOOR_Y].includes(y) && z === 0)) return false;
+    const stage = quest.getStage(player);
+    event.handled = true;
+    if (!upstairs && y === HQ_BACK_DOOR_Y) {
+      // The back door stays locked from both sides (wiki transcript); the way in is the front.
+      const fromInside = player.getLocation().getY() <= HQ_BACK_DOOR_Y - 1;
+      startTranscript(api, player, HQ_DOOR_MOURNER_NPC_ID, "Biohazard", fromInside
+        ? "infiltrating-the-mourner-hq-opening-back-door-of-the-mourner-headquarters-from-the-inside"
+        : "infiltrating-the-mourner-hq-opening-back-door-of-the-mourner-headquarters");
+      return true;
+    }
+    if (upstairs) {
+      if (stage < STAGE_POISONED_STEW || !wearingMedicalGown(player)) {
+        player.sendMessage("The door is locked.");
+        return true;
+      }
+      const inside = player.getLocation().getX() >= 2548;
+      crossObstacle(player, new Location(inside ? 2546 : 2548,y,z), null);
+      return true;
+    }
+    const leaving = player.getLocation().getY() > HQ_FRONT_DOOR_Y;
+    if (leaving) {
+      crossObstacle(player, new Location(x,HQ_FRONT_DOOR_Y - 1,0), null);
+      return true;
+    }
+    // The mourner on the door answers: turned away before the stew, then until a gown is worn;
+    // in the gown he waves the "doctor" in.
+    if (stage < STAGE_POISONED_STEW) {
+      startTranscript(api, player, HQ_DOOR_MOURNER_NPC_ID, "Biohazard", "infiltrating-the-mourner-hq-talking-to-mourner-outside-mourner-headquarters");
       return true;
     }
     if (!wearingMedicalGown(player)) {
-      event.handled = true;
-      player.sendMessage("You need to be wearing a medical gown to enter the Mourner Headquarters.");
+      startTranscript(api, player, HQ_DOOR_MOURNER_NPC_ID, "Biohazard", "infiltrating-the-mourner-hq-talking-to-mourner-outside-mourner-headquarters-after-poisoning-the-stew");
       return true;
     }
-    event.handled = true;
-    if (upstairs) {
-      const inside = player.getLocation().getX() >= 2548;
-      crossObstacle(player, new Location(inside ? 2546 : 2548,y,z), LADDER_ANIMATION);
-      return true;
+    if (stage < STAGE_GIVEN_DISTILLATOR) {
+      startTranscript(api, player, HQ_DOOR_MOURNER_NPC_ID, "Biohazard", "infiltrating-the-mourner-hq-talking-to-mourner-outside-mourner-headquarters-while-wearing-gown");
     }
-    const south = y === 3320;
-    const inside = south ? player.getLocation().getY() >= 3321 : player.getLocation().getY() <= 3327;
-    const destinationY = south ? (inside ? 3319 : 3321) : (inside ? 3329 : 3327);
-    crossObstacle(player, new Location(x,destinationY,0), LADDER_ANIMATION);
+    crossObstacle(player, new Location(x,HQ_FRONT_DOOR_Y + 1,0), null);
     return true;
   }
 
@@ -978,8 +1059,9 @@ module.exports = function registerBiohazardQuest(api) {
     const z = location?.getZ?.() ?? location?.z;
     if (x !== 2551 || ![3325,3326].includes(y) || z !== 1) return false;
     event.handled = true;
-    const inside = player.getLocation().getX() >= 2552;
-    crossObstacle(player, new Location(inside ? 2550 : 2552,y,1), LADDER_ANIMATION);
+    const inside = player.getLocation().getX() >= CAGE_GATE_EAST_X;
+    if (!inside) player.sendMessage("You use the key to open the gate.");
+    crossObstacle(player, new Location(inside ? CAGE_GATE_WEST_X : CAGE_GATE_EAST_X,y,1), null);
     return true;
   }
 
@@ -1026,6 +1108,15 @@ module.exports = function registerBiohazardQuest(api) {
     return true;
   }
 
+  function openHqTrapdoor(event) {
+    const { player, objectId, location } = event;
+    const x = location?.getX?.() ?? location?.x, y = location?.getY?.() ?? location?.y, z = location?.getZ?.() ?? location?.z;
+    if (objectId !== HQ_TRAPDOOR_ID || x !== HQ_TRAPDOOR.x || y !== HQ_TRAPDOOR.y || z !== 0) return false;
+    event.handled = true;
+    startTranscript(api, player, HQ_DOOR_MOURNER_NPC_ID, "Biohazard", "infiltrating-the-mourner-hq-attempting-to-open-trapdoor-inside-mourner-headquarters");
+    return true;
+  }
+
   function isGuidorBedroomDoor(object) {
     const location = object?.getLocation?.();
     const x = location?.getX?.() ?? location?.x;
@@ -1033,13 +1124,41 @@ module.exports = function registerBiohazardQuest(api) {
     return x === GUIDOR_BEDROOM_DOOR.x && y === GUIDOR_BEDROOM_DOOR.y;
   }
 
-  function handleVarrockEnter({ player }) {
+  const guardSearches = (player) => {
     const stage = quest.getStage(player);
-    if (stage < STAGE_SPOKEN_TO_CHEMIST || stage >= STAGE_FOUND_SECRET) return;
+    return stage >= STAGE_SPOKEN_TO_CHEMIST && stage < STAGE_FOUND_SECRET;
+  };
+
+  /** The guard halts and searches the player at the gate, then lets them through on "You may now pass." */
+  function searchAtVarrockGate(event) {
+    const { player, objectId, location } = event;
+    if (!VARROCK_GATE_IDS.has(objectId) || !location) return false;
+    const x = location.getX?.() ?? location.x, y = location.getY?.() ?? location.y, z = location.getZ?.() ?? location.z;
+    if (x !== VARROCK_GATE.x || y < VARROCK_GATE.minY || y > VARROCK_GATE.maxY || z !== 0) return false;
+    if (player.getLocation().getX() >= VARROCK_GATE.x || !guardSearches(player)) return false;
+    event.handled = true;
+    searchedAtGate.add(player);
+    startTranscript(api, player, GUARD_NPC_ID, "Biohazard", "visiting-south-east-varrock-entering-south-east-varrock");
+    return true;
+  }
+
+  function handleGuardPass({ player, npcId, text }) {
+    if (npcId !== GUARD_NPC_ID || text !== GUARD_PASS_LINE || !searchedAtGate.has(player)) return;
+    const at = player.getLocation();
+    if (at.getX() >= VARROCK_GATE.x) return;
+    const y = Math.min(VARROCK_GATE.maxY, Math.max(VARROCK_GATE.minY, at.getY()));
+    crossObstacle(player, new Location(VARROCK_GATE.x, y, 0), null);
+  }
+
+  function handleVarrockEnter({ player }) {
+    if (!guardSearches(player)) return;
+    // Already searched at the gate; this only catches other ways in.
+    if (searchedAtGate.has(player)) return;
     startTranscript(api, player, GUARD_NPC_ID, "Biohazard", "visiting-south-east-varrock-entering-south-east-varrock");
   }
 
   function handleVarrockExit({ player }) {
+    searchedAtGate.delete(player);
     const stage = quest.getStage(player);
     if (stage < STAGE_SPOKEN_TO_CHEMIST || stage >= STAGE_FOUND_SECRET) return;
     if (![ETHENEA_ITEM_ID, LIQUID_HONEY_ITEM_ID, SULPHURIC_BROLINE_ITEM_ID].some((itemId) => held(player, itemId))) return;
@@ -1077,6 +1196,7 @@ module.exports = function registerBiohazardQuest(api) {
         return true;
       }
     }
+    if (searchAtVarrockGate(event)) return true;
     // Doors.plugin owns the HQ door and cage gates; answer through its toggle
     // event so the gown/key checks run before it opens them.
     if (openMournerDoor(event)) return true;
@@ -1130,6 +1250,8 @@ module.exports = function registerBiohazardQuest(api) {
   api.onObjectInteraction("Gate", { Open: openCageGate });
   api.onObjectInteraction("Crate", { Search: searchMournerCrate });
   api.onObjectInteraction("Bedroom door", { Open: openBedroomDoor });
+  api.onObjectInteraction("Trapdoor", { Open: openHqTrapdoor });
+  api.onCustomEvent("npc-dialogue:line", handleGuardPass);
   api.onItemOnObject(handleItemOnObject);
   api.onItemAction("Pigeon cage", { Open: openPigeonCage });
   api.onZoneEnter(VARROCK_SOUTH_EAST_ZONE, handleVarrockEnter);

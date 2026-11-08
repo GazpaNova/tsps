@@ -462,3 +462,19 @@ test('q018 rapid follow stop/restart keeps one pending watcher for the same NPC'
   h.tick(1);
   assert.equal(pending().length,0,'logout terminates its observer');
 });
+
+test('q018 the cellar Zanik (npc 4507 via varbit 2264) shows only until she joins as the follower', () => {
+  const { h, p } = dttd(0);
+  h.emit('npc-dialogue:hook', { player: p, hook: START_HOOK, npcId: N.MISTAG_4 });
+  assert.equal(h.quest.getStage(p), 1);
+  assert.equal(p.varbits.get(2264), 1, 'she waits in the cellar once the quest starts');
+  giveHamSet(p, 2);
+  h.action(p, N.ZANIK, 'ottYm8');
+  assert.equal(h.quest.getStage(p), 2);
+  assert.equal(p.varbits.get(2264), 0, 'no second, cellar Zanik beside the follower');
+  for (const stage of [3, 4, 10, 14]) {
+    const later = dttd(stage);
+    later.h.login(later.p);
+    assert.equal(later.p.varbits.get(2264), 0, `stage ${stage} hides the cellar Zanik on login`);
+  }
+});

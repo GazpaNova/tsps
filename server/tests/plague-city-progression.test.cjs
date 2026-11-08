@@ -82,7 +82,10 @@ test('Bravek only consumes cure and grants warrant at the actual transcript hand
 });
 test('barrel is location scoped, and Elena requires the cell unlock with its key', () => {
   const {player, inv}=fixture(27), I=core.ItemIdentifiers, O=core.ObjectIdentifiers, npc=core.NpcIdentifiers.ELENA_2;
-  assert.equal(variant({player,npcId:npc}),null); assert.equal(quest.getStage(player),27);
+  assert.match(variant({player,npcId:npc}),/basement-door.*without-the-key/,'locked in: her Plague City plea, not the Song of the Elves page');
+  assert.equal(quest.getStage(player),27);
+  const locked={player,npcId:npc,stepId:'Gtrtgc',handled:false};action(locked);assert.equal(locked.handled,true,'talking skips the door message');
+  const again={player,npcId:npc,stepId:'Gtrtgc',handled:false};action(again);assert.equal(again.handled,false,'only once per talk');
   const barrel=named.get('Barrel').Search;
   assert.equal(barrel({player,objectId:O.BARREL_11,location:{x:3221,y:9910,z:0}}),false);
   barrel({player,objectId:O.BARREL_11,location:{x:2534,y:3268,z:0}}); assert.equal(inv.getAmount(I.A_SMALL_KEY),1);
@@ -204,4 +207,21 @@ test('unlocking Elena cell permits passage and conserves its key', () => {
  assert.equal(inv.getAmount(core.ItemIdentifiers.A_SMALL_KEY),1);
  assert.match(variant({player,npcId:core.NpcIdentifiers.ELENA_2}),/after-unlocking/);
  assert.equal(quest.getStage(player),28);
+});
+
+test('pulling the grill happens at the grill, not beside Edmond, and only once', () => {
+ const {player}=fixture(9);player.setLocation(new core.Location(2517,9755,0));
+ act(player,core.NpcIdentifiers.EDMOND_2,'oCU2uO');
+ assert.deepEqual([player.getLocation().getX(),player.getLocation().getY()],[2514,9740]);
+ act(player,core.NpcIdentifiers.EDMOND_2,'oCU2uO');assert.equal(tasks.length,1);
+ tick(3);assert.equal(quest.getStage(player),10);
+});
+
+test('quest doors cross without the ladder-climb animation', () => {
+ const {player}=fixture(25);player.setLocation(new core.Location(2529,3314,0));
+ const animations=[];player.performAnimation=anim=>animations.push(anim?.getId?.() ?? anim?.id);
+ const e={player,objectId:core.ObjectIdentifiers.DOOR_80,location:{x:2530,y:3314,z:0}};
+ for(const fn of hooks.get('door:toggle'))fn(e);tick(2);
+ assert.equal(player.getLocation().getX(),2531);
+ assert.ok(!animations.includes(828),'no ladder climb');
 });
