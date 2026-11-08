@@ -1159,25 +1159,79 @@ module.exports = function registerDeathToTheDorgeshuunQuest(api) {
     playVariant(player, NpcIdentifiers.ZANIK, "the-power-of-the-tears-inspecting-zanik");
   }
 
-  function stepThrough(player, location) {
-    const current = player.getLocation();
-    const dx = current.getX() - location.x;
-    const dy = current.getY() - location.y;
-    const destination =
-      Math.abs(dx) >= Math.abs(dy)
-        ? new Location(location.x - (dx >= 0 ? 1 : -1), location.y, current.getZ())
-        : new Location(location.x, location.y - (dy >= 0 ? 1 : -1), current.getZ());
-    player.moveTo(destination);
+  /**
+   * The store room's cracks (15731) and lock-pick doors (15759) are wall locs: each sits on one
+   * edge of its own tile (rotation 0 west, 1 north, 2 east, 3 south), so its two sides are that
+   * tile and the neighbour across the edge. Cache placements, revision 241.
+   */
+  const STORE_WALL_PASSAGES = new Map([
+    ["15731:2569,5190", 3], ["15731:2569,5194", 1],
+    ["15759:2567,5192", 0], ["15759:2567,5198", 0], ["15759:2576,5192", 2], ["15759:2576,5198", 2],
+  ]);
+  const EDGE_STEP = [[-1, 0], [0, 1], [1, 0], [0, -1]];
+
+  /** The far side of a wall passage from where the player stands, or null for an unknown one. */
+  function acrossWall(player, objectId, location) {
+    const rotation = STORE_WALL_PASSAGES.get(`${objectId}:${location.x},${location.y}`);
+    if (rotation === undefined) return null;
+    const [dx, dy] = EDGE_STEP[rotation];
+    const here = player.getLocation();
+    const own = { x: location.x, y: location.y };
+    const other = { x: location.x + dx, y: location.y + dy };
+    // Whichever side the player is nearer is where they are; the other side is where they go.
+    const distance = (tile) => Math.max(Math.abs(here.getX() - tile.x), Math.abs(here.getY() - tile.y));
+    const target = distance(own) <= distance(other) ? other : own;
+    return new Location(target.x, target.y, here.getZ());
+  }
+
+  function stepThrough(player, objectId, location) {
+    const destination = acrossWall(player, objectId, location);
+    if (destination) player.moveTo(destination);
+  }
+
+  /** "Pick-lock" (23 Thieving) crosses the store-room door; "Open" finds it locked. */
+  function storeRoomDoor(event) {
+    const { player } = event;
+    const location = eventTile(event);
+    if (!location || !acrossWall(player, ObjectIdentifiers.DOOR_362, location)) return false;
+    event.handled = true;
+    const option = String(event.option ?? "").toLowerCase();
+    if (option !== "pick-lock" && event.clickType !== 4) {
+      player.sendMessage("The door is locked.");
+      return true;
+    }
+    if (player.getSkillManager().getCurrentLevel(Skill.THIEVING) < 23) {
+      player.sendMessage("You need a thieving level of 23 to pick the lock of that door.");
+      return true;
+    }
+    stepThrough(player, ObjectIdentifiers.DOOR_362, location);
+    return true;
+  }
+
+  /** Doors.plugin's Open on a store-room door: it stays locked (Pick-lock is the way through). */
+  function lockedStoreRoomDoor(event) {
+    if (!event || event.handled || event.objectId !== ObjectIdentifiers.DOOR_362) return;
+    const location = eventTile(event);
+    if (!location || !acrossWall(event.player, ObjectIdentifiers.DOOR_362, location)) return;
+    event.handled = true;
+    event.player.sendMessage("The door is locked.");
+  }
+
+  function eventTile(event) {
+    const at = event.location ?? event.object?.getLocation?.();
+    if (!at) return null;
+    return { x: at.getX?.() ?? at.x, y: at.getY?.() ?? at.y };
   }
 
   function squeezeCrack(event) {
-    const { player, location } = event;
-    if (quest.getStage(player) !== STAGE_TRAPDOOR) return;
+    const { player } = event;
+    const location = eventTile(event);
+    if (quest.getStage(player) !== STAGE_TRAPDOOR || !location) return;
     if (player.getSkillManager().getCurrentLevel(Skill.AGILITY) < 23) {
       playVariant(player, NpcIdentifiers.ZANIK, "ham-seek-trying-to-squeeze-through-a-crack-without-23-agility");
       return;
     }
-    stepThrough(player, location);
+    stepThrough(player, ObjectIdentifiers.CRACK_8, location);
   }
 
   function handleObjectInteraction(event) {
@@ -1224,6 +1278,10 @@ module.exports = function registerDeathToTheDorgeshuunQuest(api) {
       if (quest.getStage(event.player) !== STAGE_TRAPDOOR) return;
       event.handled = true;
       squeezeCrack(event);
+      return;
+    }
+    if (objectId === ObjectIdentifiers.DOOR_362) {
+      storeRoomDoor(event);
     }
   }
 
@@ -1608,6 +1666,7 @@ module.exports = function registerDeathToTheDorgeshuunQuest(api) {
   api.onCustomEvent("player:bootstrap-complete", handleBootstrap);
   api.onCustomEvent("quest:stage-changed", handleQuestStageChanged);
   api.onCustomEvent("door:toggle", claimLargeDoor);
+  api.onCustomEvent("door:toggle", lockedStoreRoomDoor);
   api.onObjectInteraction(handleObjectInteraction);
   api.onItemAction(ZANIK_BODY_ITEM_ID, { Drop: handleItemAction });
   api.onNpcDeath(handleNpcDeath);

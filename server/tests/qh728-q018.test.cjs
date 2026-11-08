@@ -478,3 +478,32 @@ test('q018 the cellar Zanik (npc 4507 via varbit 2264) shows only until she join
     assert.equal(later.p.varbits.get(2264), 0, `stage ${stage} hides the cellar Zanik on login`);
   }
 });
+
+test('q018 store-room cracks and lock-pick doors cross their own wall edge', () => {
+  const { h, p } = dttd(5);
+  const at = (x, y) => p.moveTo(new core.Location(x, y, 0));
+  const where = () => [p.getLocation().getX(), p.getLocation().getY()];
+  const use = (objectId, x, y, option) => {
+    const event = { player: p, objectId, definition: { id: objectId }, location: { x, y, z: 0 }, option, handled: false };
+    (h.hooks.onObjectInteraction ?? []).forEach(fn => fn(event));
+    return event;
+  };
+  // Crack on the south edge of 2569,5190: from the corridor (5189) into 5190, and back.
+  at(2569, 5189); use(O.CRACK_8, 2569, 5190, 'squeeze-through');
+  assert.deepEqual(where(), [2569, 5190]);
+  use(O.CRACK_8, 2569, 5190, 'squeeze-through');
+  assert.deepEqual(where(), [2569, 5189]);
+  // Crack on the north edge of 2569,5194: 5194 <-> 5195.
+  at(2569, 5194); use(O.CRACK_8, 2569, 5194, 'squeeze-through');
+  assert.deepEqual(where(), [2569, 5195]);
+  // Door on the west edge of 2567,5192: Open is locked, Pick-lock crosses 2566 <-> 2567.
+  at(2566, 5192);
+  const open = use(O.DOOR_362, 2567, 5192, 'open');
+  assert.equal(open.handled, true); assert.deepEqual(where(), [2566, 5192]);
+  assert.ok(p.messages.includes('The door is locked.'));
+  use(O.DOOR_362, 2567, 5192, 'pick-lock');
+  assert.deepEqual(where(), [2567, 5192]);
+  // Door on the east edge of 2576,5198: 2576 <-> 2577.
+  at(2577, 5198); use(O.DOOR_362, 2576, 5198, 'pick-lock');
+  assert.deepEqual(where(), [2576, 5198]);
+});
