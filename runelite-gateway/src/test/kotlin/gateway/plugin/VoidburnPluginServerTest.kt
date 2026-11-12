@@ -1,13 +1,11 @@
 package gateway.plugin
 
 import gateway.session.VoidburnPluginChannel
-import io.netty.bootstrap.ServerBootstrap
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInitializer
 import io.netty.channel.SimpleChannelInboundHandler
 import io.netty.channel.nio.NioEventLoopGroup
 import io.netty.channel.socket.SocketChannel
-import io.netty.channel.socket.nio.NioServerSocketChannel
 import io.netty.handler.codec.http.DefaultHttpHeaders
 import io.netty.handler.codec.http.HttpClientCodec
 import io.netty.handler.codec.http.HttpObjectAggregator
@@ -16,9 +14,10 @@ import io.netty.handler.codec.http.websocketx.WebSocketClientHandshakerFactory
 import io.netty.handler.codec.http.websocketx.WebSocketClientProtocolHandler
 import io.netty.handler.codec.http.websocketx.WebSocketVersion
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
-import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.net.ServerSocket
 import java.net.URI
@@ -28,14 +27,24 @@ import java.util.concurrent.TimeUnit
 /**
  * Integration-style tests that exercise the real Netty pipeline on a loopback port.
  *
- * - A failed bind must not leak event-loop groups, and must not stop subsequent attempts
- *   on a different port from succeeding.
- * - A real WebSocket client can attach to a registered session over the local port.
- * - A malformed attach drops the connection.
+ * Registry events are observed through a typed Event wrapper (not a nullable queue):
+ * LinkedBlockingQueue throws NPE on offer(null), so a nullable queue in v2 silently
+ * swallowed every detach notification and the tests passed by timeout rather than by
+ * observing anything. Here, every attach and every detach surfaces as an Event value
+ * and the test asserts the value, not the absence of one.
+ *
+ * Rejection tests assert that closeFuture().await() actually returned true (completed
+ * within the deadline). A server that mistakenly kept the connection open would also
+ * reach a blocking await() that timed out; checking the boolean catches that.
  */
 class VoidburnPluginServerTest {
     private class NoopChannel : VoidburnPluginChannel {
         override fun send(message: String) {}
+    }
+
+    private sealed class Event {
+        data class Attach(val channel: VoidburnPluginChannel) : Event()
+        object Detach : Event()
     }
 
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }
@@ -59,8 +68,7 @@ class VoidburnPluginServerTest {
             // After the failed start, stop() must be safe and the server unstarted.
             server.stop()
         }
-        // A brand-new server on a fresh port must still bind cleanly — proves the JVM
-        // isn't out of selector threads or otherwise wedged.
+        // A brand-new server on a fresh port must still bind cleanly.
         val fresh = freePort()
         val server = VoidburnPluginServer(port = fresh, bindHost = "127.0.0.1", registry = registry)
         try {
@@ -73,8 +81,10 @@ class VoidburnPluginServerTest {
     @Test
     fun `attach from a real websocket client binds the registered session`() {
         val registry = VoidburnPluginRegistry()
-        val received = LinkedBlockingQueue<VoidburnPluginChannel?>()
-        registry.register("Miguel") { received.offer(it) }
+        val events = LinkedBlockingQueue<Event>()
+        registry.register("Miguel") { channel ->
+            if (channel == null) events.offer(Event.Detach) else events.offer(Event.Attach(channel))
+        }
         val port = freePort()
         val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
         server.start()
@@ -83,13 +93,19 @@ class VoidburnPluginServerTest {
             val frames = LinkedBlockingQueue<String>()
             val channel = connectWebSocketClient(group, port, frames)
             channel.writeAndFlush(TextWebSocketFrame("""{"type":"attach","username":"Miguel"}""")).sync()
-            // The registry callback should fire within a short window.
-            val chan = received.poll(2, TimeUnit.SECONDS)
-            assertNotNull(chan)
-            // Closing the client channel detaches.
-            channel.close().sync()
-            val detached = received.poll(2, TimeUnit.SECONDS)
-            assertNull(detached)
+            val attached = events.poll(2, TimeUnit.SECONDS)
+            assertTrue(attached is Event.Attach, "attach event should fire")
+            // The channel announced by the registry is the PluginConnectionHandler
+            // (the test doesn't need it further, but asserting it exists proves the
+            // lambda's non-null branch ran).
+            val bound = (attached as Event.Attach).channel
+            assertFalse(bound is NoopChannel, "bound channel should be the server handler, not a test noop")
+            // Close the client. Server detaches, registry fires null callback → Detach event.
+            val closed = channel.close().await(2, TimeUnit.SECONDS)
+            assertTrue(closed, "client close should complete")
+            val detached = events.poll(2, TimeUnit.SECONDS)
+            assertSame(Event.Detach, detached, "detach event should fire after close")
+            assertEquals(0, registry.attachmentCount)
         } finally {
             group.shutdownGracefully()
             server.stop()
@@ -99,7 +115,10 @@ class VoidburnPluginServerTest {
     @Test
     fun `malformed attach closes the connection and leaves registry empty`() {
         val registry = VoidburnPluginRegistry()
-        registry.register("Miguel") {}
+        val events = LinkedBlockingQueue<Event>()
+        registry.register("Miguel") { channel ->
+            if (channel == null) events.offer(Event.Detach) else events.offer(Event.Attach(channel))
+        }
         val port = freePort()
         val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
         server.start()
@@ -111,9 +130,14 @@ class VoidburnPluginServerTest {
             channel.writeAndFlush(
                 TextWebSocketFrame("""{"nested":{"type":"attach","username":"Miguel"}}""")
             ).sync()
-            // Server closes; channel.closeFuture completes.
-            channel.closeFuture().await(2, TimeUnit.SECONDS)
-            // No attachment was ever made.
+            // Server closes the connection — closeFuture() must COMPLETE within the
+            // deadline. Previously we ignored the return value; a hung connection
+            // would pass a timing-based "assertion" by accident.
+            val closed = channel.closeFuture().await(2, TimeUnit.SECONDS)
+            assertTrue(closed, "server should close the connection on malformed attach")
+            // No attach event fired: the registry was never touched.
+            val attached = events.poll(200, TimeUnit.MILLISECONDS)
+            assertEquals(null, attached)
             assertEquals(0, registry.attachmentCount)
         } finally {
             group.shutdownGracefully()
@@ -124,6 +148,7 @@ class VoidburnPluginServerTest {
     @Test
     fun `attach for an unregistered username closes the connection`() {
         val registry = VoidburnPluginRegistry()
+        val events = LinkedBlockingQueue<Event>()
         val port = freePort()
         val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
         server.start()
@@ -132,7 +157,10 @@ class VoidburnPluginServerTest {
             val frames = LinkedBlockingQueue<String>()
             val channel = connectWebSocketClient(group, port, frames)
             channel.writeAndFlush(TextWebSocketFrame("""{"type":"attach","username":"Nobody"}""")).sync()
-            channel.closeFuture().await(2, TimeUnit.SECONDS)
+            val closed = channel.closeFuture().await(2, TimeUnit.SECONDS)
+            assertTrue(closed, "server should close the connection when no session matches")
+            val attached = events.poll(200, TimeUnit.MILLISECONDS)
+            assertEquals(null, attached)
             assertEquals(0, registry.attachmentCount)
         } finally {
             group.shutdownGracefully()
@@ -171,13 +199,8 @@ class VoidburnPluginServerTest {
         while (System.currentTimeMillis() < deadline && !handshaker.isHandshakeComplete) {
             Thread.sleep(10)
         }
+        assertTrue(handshaker.isHandshakeComplete, "WebSocket handshake should complete")
         return channel
     }
 
-    // Silence unused-import warnings for ServerBootstrap / NioServerSocketChannel
-    // (used transitively; kept for forward compatibility in case we add a direct test).
-    @Suppress("unused")
-    private fun unusedImportsAnchor(): Any = listOf(
-        ServerBootstrap::class, NioServerSocketChannel::class,
-    )
 }

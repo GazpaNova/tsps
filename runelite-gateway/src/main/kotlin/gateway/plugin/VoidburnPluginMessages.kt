@@ -33,6 +33,14 @@ internal object VoidburnPluginMessages {
     private const val MAX_USERNAME_LENGTH = 32
 
     /**
+     * Maximum structural nesting depth the parser will walk. Attach payloads have no
+     * legitimate reason to nest beyond this, and the limit bounds stack consumption when
+     * a hostile client sends thousands of nested arrays/objects. Picked to be well below
+     * the default JVM thread stack ceiling.
+     */
+    private const val MAX_NESTING_DEPTH = 16
+
+    /**
      * Parse one complete JSON object at the top level. Returns a map of its top-level
      * string-valued fields (non-string fields are present in the structure but skipped
      * in the result map). Returns null on any structural error: missing/extra braces,
@@ -45,6 +53,11 @@ internal object VoidburnPluginMessages {
         p.skipWhitespace()
         if (!p.consume('{')) return null
         val out = HashMap<String, String>()
+        // Track EVERY key we've seen at this level, independent of whether we kept its
+        // value. Without this, a non-string value for a duplicate key — `"type":null` —
+        // would never land in `out`, and a later `"type":"attach"` would slip past the
+        // duplicate check.
+        val seenKeys = HashSet<String>()
         p.skipWhitespace()
         if (p.peek() == '}') {
             p.advance()
@@ -54,7 +67,7 @@ internal object VoidburnPluginMessages {
         while (true) {
             p.skipWhitespace()
             val key = p.readString() ?: return null
-            if (out.containsKey(key)) return null
+            if (!seenKeys.add(key)) return null
             p.skipWhitespace()
             if (!p.consume(':')) return null
             p.skipWhitespace()
@@ -81,6 +94,8 @@ internal object VoidburnPluginMessages {
 
     private class Parser(private val s: String) {
         private var i: Int = 0
+        /** Current structural nesting depth; incremented when entering an object or array. */
+        private var depth: Int = 0
 
         fun eof(): Boolean = i >= s.length
         fun peek(): Char = if (eof()) '\u0000' else s[i]
@@ -98,6 +113,9 @@ internal object VoidburnPluginMessages {
                 if (c == ' ' || c == '\t' || c == '\n' || c == '\r') i++ else return
             }
         }
+
+        private fun isHex(c: Char): Boolean =
+            c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F'
 
         /**
          * Read a JSON string at the current position; leaves the cursor just past the
@@ -128,8 +146,17 @@ internal object VoidburnPluginMessages {
                             't' -> sb.append('\t')
                             'u' -> {
                                 if (i + 5 >= s.length) return null
-                                val hex = s.substring(i + 2, i + 6)
-                                val code = hex.toIntOrNull(16) ?: return null
+                                val h0 = s[i + 2]
+                                val h1 = s[i + 3]
+                                val h2 = s[i + 4]
+                                val h3 = s[i + 5]
+                                // Strict: every escape digit must be hex. toIntOrNull
+                                // alone would accept a leading sign (\u+041 → 0x41).
+                                if (!isHex(h0) || !isHex(h1) || !isHex(h2) || !isHex(h3)) return null
+                                val code = ((h0.digitToInt(16) shl 12) or
+                                        (h1.digitToInt(16) shl 8) or
+                                        (h2.digitToInt(16) shl 4) or
+                                        h3.digitToInt(16))
                                 sb.append(code.toChar())
                                 i += 4
                             }
@@ -137,8 +164,11 @@ internal object VoidburnPluginMessages {
                         }
                         i += 2
                     }
-                    '\n', '\r' -> return null // raw control chars not allowed in strings
                     else -> {
+                        // JSON forbids EVERY unescaped character below U+0020 in a
+                        // string. v2 only rejected LF/CR; a literal tab, vertical tab,
+                        // form feed, or any other control character went through.
+                        if (c < ' ') return null
                         sb.append(c)
                         i++
                     }
@@ -200,6 +230,14 @@ internal object VoidburnPluginMessages {
         }
 
         private fun skipObject(): Boolean {
+            if (depth >= MAX_NESTING_DEPTH) return false
+            depth++
+            val ok = skipObjectBody()
+            depth--
+            return ok
+        }
+
+        private fun skipObjectBody(): Boolean {
             if (!consume('{')) return false
             skipWhitespace()
             if (peek() == '}') { i++; return true }
@@ -220,6 +258,14 @@ internal object VoidburnPluginMessages {
         }
 
         private fun skipArray(): Boolean {
+            if (depth >= MAX_NESTING_DEPTH) return false
+            depth++
+            val ok = skipArrayBody()
+            depth--
+            return ok
+        }
+
+        private fun skipArrayBody(): Boolean {
             if (!consume('[')) return false
             skipWhitespace()
             if (peek() == ']') { i++; return true }

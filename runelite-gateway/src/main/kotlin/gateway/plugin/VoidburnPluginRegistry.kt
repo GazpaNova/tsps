@@ -14,12 +14,20 @@ import java.util.concurrent.ConcurrentHashMap
  * knows itself by.
  *
  * Concurrency and ownership: registration and lookup both happen off the main event
- * thread (login and WebSocket accept happen on their respective pools), so the maps are
- * ConcurrentHashMaps. Every register()/attach() returns an opaque handle (Registration /
- * Attachment). Unregister and detach are owner-scoped: they only mutate state when the
- * current slot is still owned by the handle. A stale cleanup — session A's close() firing
- * after session B replaced its registration, or channel A's close() firing after channel
- * B replaced its attachment — becomes a no-op and leaves the replacement intact.
+ * thread (login and WebSocket accept happen on their respective pools). Every
+ * register()/attach() returns an opaque handle (Registration / Attachment). Unregister
+ * and detach are owner-scoped: they only mutate state when the current slot is still
+ * owned by the handle. A stale cleanup — session A's close() firing after session B
+ * replaced its registration, or channel A's close() firing after channel B replaced its
+ * attachment — becomes a no-op and leaves the replacement intact.
+ *
+ * Ordering: the map mutation and the attach-callback publication are serialized under
+ * one monitor so that two concurrent attaches (or an attach racing a detach) can never
+ * leave the registry pointing at one channel while the session's own field points at
+ * another. Attach callbacks are expected to do trivial field assignment only (see
+ * GatewaySession.voidburnPluginRegistration); a callback that re-entered the registry
+ * would deadlock, which is the intended signal. The hot path is light (one or two
+ * attaches per plugin connection), so single-monitor contention is not a concern.
  *
  * Security note for Phase 2c: this patch does NOT authenticate attach messages. Attach
  * only writes into the registry; whether the GatewaySession actually uses the channel is
@@ -51,6 +59,14 @@ class VoidburnPluginRegistry {
     private val attachments = ConcurrentHashMap<String, Attachment>()
 
     /**
+     * Guards the paired `map mutation` + `callback invocation` steps of register,
+     * unregister, attach and detach. The maps are still ConcurrentHashMaps so that
+     * benign lookups outside these four methods stay lock-free; the lock exists to make
+     * the two publish steps (map state and session-side callback) atomic together.
+     */
+    private val publishLock = Any()
+
+    /**
      * Register a session under its username. The `attach` callback receives a channel
      * when a plugin connects, and null when the plugin disconnects. The session typically
      * writes the channel into its voidburnPluginChannel field (see GatewaySession).
@@ -62,14 +78,18 @@ class VoidburnPluginRegistry {
      */
     fun register(username: String, attach: (VoidburnPluginChannel?) -> Unit): Registration {
         val newReg = Registration(username, attach)
-        val previousReg = sessions.put(username, newReg)
-        if (previousReg != null) {
-            // The old session is being replaced. Clear any attachment that was bound to
-            // the old registration and notify the old session that its channel is gone.
-            val previousAttachment = attachments[username]
-            if (previousAttachment != null && previousAttachment.registration === previousReg) {
-                attachments.remove(username, previousAttachment)
-                previousReg.attach(null)
+        synchronized(publishLock) {
+            val previousReg = sessions.put(username, newReg)
+            if (previousReg != null) {
+                // The old session is being replaced. Clear any attachment that was
+                // bound to the old registration and notify the old session that its
+                // channel is gone. Callback stays inside the lock so no concurrent
+                // attach can slip between map mutation and session-field publication.
+                val previousAttachment = attachments[username]
+                if (previousAttachment != null && previousAttachment.registration === previousReg) {
+                    attachments.remove(username, previousAttachment)
+                    previousReg.attach(null)
+                }
             }
         }
         return newReg
@@ -84,11 +104,13 @@ class VoidburnPluginRegistry {
      * this registration — the replacing session's attachment, if any, is untouched.
      */
     fun unregister(registration: Registration) {
-        val removed = sessions.remove(registration.username, registration)
-        if (!removed) return
-        val attachment = attachments[registration.username]
-        if (attachment != null && attachment.registration === registration) {
-            attachments.remove(registration.username, attachment)
+        synchronized(publishLock) {
+            val removed = sessions.remove(registration.username, registration)
+            if (!removed) return
+            val attachment = attachments[registration.username]
+            if (attachment != null && attachment.registration === registration) {
+                attachments.remove(registration.username, attachment)
+            }
         }
     }
 
@@ -104,15 +126,19 @@ class VoidburnPluginRegistry {
      * the voidburnPluginChannel field.
      */
     fun attach(username: String, channel: VoidburnPluginChannel): Attachment? {
-        val registration = sessions[username] ?: return null
-        val attachment = Attachment(registration, channel)
-        // Place the new attachment; we don't inspect the previous one. The previous
-        // channel's detach() call will compare handles and find the slot no longer owns
-        // it, so it will not clobber this attachment either. The session itself sees the
-        // callback invocation below, which overwrites voidburnPluginChannel.
-        attachments[username] = attachment
-        registration.attach(channel)
-        return attachment
+        synchronized(publishLock) {
+            val registration = sessions[username] ?: return null
+            val attachment = Attachment(registration, channel)
+            // Place the new attachment; we don't inspect the previous one. The previous
+            // channel's detach() call will compare handles and find the slot no longer
+            // owns it, so it will not clobber this attachment either. Callback stays
+            // inside the lock so two concurrent attaches publish in a serialized order:
+            // whichever one writes to the map last is also the one whose channel sits
+            // in the session's field when the lock is released.
+            attachments[username] = attachment
+            registration.attach(channel)
+            return attachment
+        }
     }
 
     /**
@@ -124,11 +150,16 @@ class VoidburnPluginRegistry {
      * dangling: just drop it without touching the possibly-replacing session's state).
      */
     fun detach(attachment: Attachment) {
-        val removed = attachments.remove(attachment.registration.username, attachment)
-        if (!removed) return
-        val currentReg = sessions[attachment.registration.username]
-        if (currentReg === attachment.registration) {
-            attachment.registration.attach(null)
+        synchronized(publishLock) {
+            val removed = attachments.remove(attachment.registration.username, attachment)
+            if (!removed) return
+            val currentReg = sessions[attachment.registration.username]
+            if (currentReg === attachment.registration) {
+                // Clearing the session field happens inside the lock so a racing attach
+                // can't publish its channel between our map removal and this null
+                // notification and have the null clobber the newcomer.
+                attachment.registration.attach(null)
+            }
         }
     }
 
