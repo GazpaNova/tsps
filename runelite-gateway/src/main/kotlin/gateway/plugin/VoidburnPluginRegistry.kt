@@ -29,12 +29,14 @@ import java.util.concurrent.ConcurrentHashMap
  * current production callback does: one field assignment (see GatewaySession's
  * voidburnPluginChannel setter path) and no I/O.
  *
- * Security note for Phase 2c: this patch does NOT authenticate attach messages. Attach
- * only writes into the registry; whether the GatewaySession actually uses the channel is
- * gated separately by GatewaySession.voidburnPluginAuthenticated, which Phase 2b never
- * sets to true. Phase 2c adds a session token (issued at login, verified on attach) and
- * flips the authenticated flag once the token checks out. Until then, forwarding is
- * inert regardless of what the WebSocket side does.
+ * Authentication: attach() now carries the token submitted by the plugin and the
+ * registry hands it to the session's authorize callback. Only a matching token lets
+ * the attach succeed — no match, attach returns null and the slot is untouched. The
+ * bind itself IS the authorization: a non-null channel reaches the session's field
+ * only through this gate, so Interfaces consults `voidburnPluginChannel` directly
+ * without a separate authenticated flag. Replacement follows the same rule: attach B
+ * with a bad token leaves A attached; attach B with a valid token (fresh plugin
+ * instance for the same session) replaces A in the normal way.
  */
 class VoidburnPluginRegistry {
     /**
@@ -44,6 +46,7 @@ class VoidburnPluginRegistry {
     class Registration internal constructor(
         internal val username: String,
         internal val attach: (VoidburnPluginChannel?) -> Unit,
+        internal val authorize: (token: String) -> Boolean,
     )
 
     /**
@@ -67,17 +70,28 @@ class VoidburnPluginRegistry {
     private val publishLock = Any()
 
     /**
-     * Register a session under its username. The `attach` callback receives a channel
-     * when a plugin connects, and null when the plugin disconnects. The session typically
-     * writes the channel into its voidburnPluginChannel field (see GatewaySession).
+     * Register a session under its username.
+     *
+     * The `attach` callback receives a channel when a plugin connects (and has been
+     * authorized), and null when the plugin disconnects. The session typically writes
+     * the channel into its voidburnPluginChannel field (see GatewaySession).
+     *
+     * The `authorize` callback takes the token the attaching plugin submitted and
+     * returns true iff it is valid for this session. It is called inside the registry's
+     * publish lock, so it must stay simple (constant-time equality check against a
+     * token the session minted at login) and must not re-enter the registry.
      *
      * A re-register for the same username (reconnecting player) replaces the previous
-     * registration. Any attachment held by the previous registration is cleared and that
-     * registration's attach callback is invoked with null, so the old session's channel
-     * reference drops to null before the new session owns the slot.
+     * registration. Any attachment held by the previous registration is cleared and
+     * that registration's attach callback is invoked with null, so the old session's
+     * channel reference drops to null before the new session owns the slot.
      */
-    fun register(username: String, attach: (VoidburnPluginChannel?) -> Unit): Registration {
-        val newReg = Registration(username, attach)
+    fun register(
+        username: String,
+        attach: (VoidburnPluginChannel?) -> Unit,
+        authorize: (token: String) -> Boolean,
+    ): Registration {
+        val newReg = Registration(username, attach, authorize)
         synchronized(publishLock) {
             val previousReg = sessions.put(username, newReg)
             if (previousReg != null) {
@@ -115,19 +129,26 @@ class VoidburnPluginRegistry {
     }
 
     /**
-     * Attach a channel to the session for `username`. Returns an Attachment handle when a
-     * session was found and the attach callback was invoked; null when no session with
-     * that name is currently registered (the plugin tried to attach for a player who
-     * isn't logged in).
+     * Attach a channel to the session for `username`, authorizing with `token`. Returns
+     * an Attachment handle when a session was found AND the token authorized; null when
+     * no session with that name is currently registered (the plugin tried to attach for
+     * a player who isn't logged in), or when the token did not authorize against the
+     * session's current authorize callback.
      *
-     * A second attach for the same username (a second plugin instance) replaces the first
-     * attachment: the first channel's handle becomes stale, so its later detach() is a
-     * no-op. The session's attach callback is invoked with the new channel, overwriting
-     * the voidburnPluginChannel field.
+     * A failed authorization leaves the registry untouched: no attachment is created,
+     * the attach callback is not invoked, and any existing attachment for this
+     * username (an earlier plugin instance that successfully attached) stays put.
+     *
+     * A second successful attach for the same username (a second plugin instance with
+     * a valid token — same session, same mint) replaces the first attachment: the
+     * first channel's handle becomes stale, so its later detach() is a no-op. The
+     * session's attach callback is invoked with the new channel, overwriting the
+     * voidburnPluginChannel field.
      */
-    fun attach(username: String, channel: VoidburnPluginChannel): Attachment? {
+    fun attach(username: String, token: String, channel: VoidburnPluginChannel): Attachment? {
         synchronized(publishLock) {
             val registration = sessions[username] ?: return null
+            if (!registration.authorize(token)) return null
             val attachment = Attachment(registration, channel)
             // Place the new attachment; we don't inspect the previous one. The previous
             // channel's detach() call will compare handles and find the slot no longer

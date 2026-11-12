@@ -42,6 +42,8 @@ import net.rsprot.protocol.loginprot.outgoing.util.AuthenticatorResponse
 import net.rsprot.protocol.message.IncomingGameMessage
 import net.rsprot.protocol.message.OutgoingGameMessage
 import java.net.InetSocketAddress
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -87,27 +89,29 @@ class GatewaySession(
     }
     /**
      * Voidburn RuneLite plugin side channel, null until a plugin connects for this
-     * session. Attached by Phase 2b's WebSocket server through the registry callback.
-     *
-     * NOT consulted directly by Interfaces — forwarding is gated on authenticated()
-     * below, which Phase 2b never clears to true. A hostile unauthenticated client that
-     * knows a logged-in username can still cause this field to be written, but nothing
-     * reads it until Phase 2c lands authentication.
+     * session AND submits a token that authorizes against this session's mint. The
+     * bind IS the authorization: the registry only invokes the attach callback below
+     * after its authorize() returned true, so a non-null value here is by construction
+     * a channel that cleared the gate. Interfaces consults this field directly.
      */
     @Volatile var voidburnPluginChannel: VoidburnPluginChannel? = null
 
     /**
-     * Whether forwarding to [voidburnPluginChannel] is currently permitted for this
-     * session. Phase 2b leaves this false for every session; Phase 2c flips it to true
-     * once a plugin attach message carries a valid session token. Interfaces reads this
-     * via its channel supplier, so a non-null but unauthenticated channel is inert.
+     * Per-session random token minted at handshake. Delivered once to the player (as
+     * a game message) so they can paste it into the RuneLite plugin config. Compared
+     * against the token the plugin sends in its attach message. Cleared when the
+     * session closes (so a late attach cannot authorize against a dead session), and
+     * naturally rotated on reconnect (fresh session, fresh mint).
+     *
+     * 32 bytes of random data, base64-url-safe without padding → ~43 printable
+     * characters. Dashed in groups of four for copy-paste readability.
      */
-    @Volatile var voidburnPluginAuthenticated: Boolean = false
+    private var voidburnPluginToken: String? = null
 
     /** Handle from registering with the plugin registry; held so unregister is owner-scoped. */
     private var voidburnPluginRegistration: gateway.plugin.VoidburnPluginRegistry.Registration? = null
 
-    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send, { if (voidburnPluginAuthenticated) voidburnPluginChannel else null })
+    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send, { voidburnPluginChannel })
     private val upstream =
         Upstream(
             varps,
@@ -263,14 +267,25 @@ class GatewaySession(
     private fun onHandshake(handshake: TspsHandshake) {
         this.handshake = handshake
         state = State.AWAITING_SCENE
-        // Register with the Voidburn plugin registry so a plugin WebSocket can attach to
-        // this session by its OSRS display name. The registry's `attach` callback writes
-        // into voidburnPluginChannel; detach writes null. The returned handle is owner-
-        // scoped: unregistering with it is a no-op if a replacement session has taken
-        // over the slot. Unregistered in close().
-        voidburnPluginRegistration = context.voidburnPluginRegistry.register(handshake.name) { channel ->
-            voidburnPluginChannel = channel
-        }
+        // Mint a per-session token BEFORE registering, so the authorize callback has
+        // something to compare against on an attach that lands before the welcome
+        // message is even sent to the client. The token is fixed for the lifetime of
+        // this session; reconnecting mints a fresh one.
+        val mintedToken = mintVoidburnPluginToken()
+        voidburnPluginToken = mintedToken
+        // Register with the Voidburn plugin registry so a plugin WebSocket can attach
+        // to this session by its OSRS display name AND token. The registry's `attach`
+        // callback writes into voidburnPluginChannel (only after `authorize` returned
+        // true); detach writes null. The returned handle is owner-scoped: unregister
+        // with it is a no-op if a replacement session has taken over the slot.
+        // Unregistered in close().
+        voidburnPluginRegistration = context.voidburnPluginRegistry.register(
+            handshake.name,
+            attach = { channel -> voidburnPluginChannel = channel },
+            // Constant-time compare so a hostile client can't probe the token one byte
+            // at a time by watching timing. The token is short, but the habit is right.
+            authorize = { submitted -> tokensEqual(submitted, voidburnPluginToken) },
+        )
         beforeHandshake.forEach(::onGamePacket)
         beforeHandshake.clear()
     }
@@ -445,6 +460,16 @@ class GatewaySession(
         varps.setVarbit(NAME_SET_VARBIT, 1)?.let(session::queue)
         beforeLogin.forEach(session::queue)
         beforeLogin.clear()
+        // Deliver the Voidburn plugin token to the player as a game message, once,
+        // right after login. It lands in their own chat window only — game messages
+        // are addressed to a single client and other players never see them. The
+        // player copies this into the RuneLite plugin config to pair the plugin with
+        // this session. Lost in scrollback is fine; a slash-command to reissue is a
+        // future Phase 2c step.
+        voidburnPluginToken?.let { token ->
+            session.queue(MessageGame(GAME_MESSAGE, "RuneLite plugin token: $token"))
+            session.queue(MessageGame(GAME_MESSAGE, "Paste this in Settings → Voidburn in RuneLite to pair the plugin."))
+        }
         state = State.IN_GAME
         // Pass the client's packets on as they come, not once per tick: tsps only acts on them at
         // its next tick, so waiting for ours as well added up to a tick to every click.
@@ -560,9 +585,12 @@ class GatewaySession(
         // Unregister from the Voidburn plugin registry so a late-arriving plugin attach
         // doesn't bind to a torn-down session. Owner-scoped: if a replacement session
         // took over this username (reconnecting player), this unregister is a no-op and
-        // leaves the replacement in the registry.
+        // leaves the replacement in the registry. Clear the token too, so a last-gasp
+        // authorize() against this registration (if the unregister races the attach)
+        // sees a null token and compares as unequal rather than against the dead mint.
         voidburnPluginRegistration?.let { context.voidburnPluginRegistry.unregister(it) }
         voidburnPluginRegistration = null
+        voidburnPluginToken = null
         if (::tsps.isInitialized) tsps.close()
         session?.flush()
         session?.requestClose()
@@ -573,6 +601,36 @@ class GatewaySession(
         self = null
         executor.shutdown()
         executor.awaitTermination(0, TimeUnit.SECONDS)
+    }
+
+    /**
+     * Generate the per-session RuneLite plugin token: 32 bytes from SecureRandom,
+     * base64-url-safe without padding (43 characters), then grouped in blocks of four
+     * with dashes so the player can read and type it back without ambiguity. Example:
+     * `QzNk-WvZr-9sYm-dTaQ-xB7l-EpMz-hL3f-K8vN-RtGo-UjYi-aC4`
+     */
+    private fun mintVoidburnPluginToken(): String {
+        val bytes = ByteArray(32)
+        SecureRandom().nextBytes(bytes)
+        val raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+        return raw.chunked(4).joinToString("-")
+    }
+
+    /**
+     * Constant-time comparison for tokens. A null stored token (session closed, token
+     * cleared) always compares unequal, so a submitted empty string cannot pair with a
+     * cleared slot. Length mismatch short-circuits with a different return value than
+     * byte-by-byte difference, but there is no secret length to leak: the token length
+     * is fixed by the server.
+     */
+    private fun tokensEqual(submitted: String, stored: String?): Boolean {
+        if (stored == null) return false
+        if (submitted.length != stored.length) return false
+        var diff = 0
+        for (i in submitted.indices) {
+            diff = diff or (submitted[i].code xor stored[i].code)
+        }
+        return diff == 0
     }
 
     private companion object {

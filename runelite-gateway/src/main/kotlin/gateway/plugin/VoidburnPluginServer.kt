@@ -145,20 +145,26 @@ private class PluginConnectionHandler(
     override fun channelRead0(ctx: ChannelHandlerContext, frame: TextWebSocketFrame) {
         val payload = frame.text()
         if (attachment == null) {
-            val username = VoidburnPluginMessages.parseAttach(payload)
-            if (username == null) {
+            val attach = VoidburnPluginMessages.parseAttach(payload)
+            if (attach == null) {
                 log.fine("rejecting malformed attach from ${ctx.channel().remoteAddress()}")
                 ctx.close()
                 return
             }
-            val handle = registry.attach(username, this)
+            // Deliberately indistinguishable error paths: "no session with that name"
+            // and "session exists but token is wrong" both close the connection with the
+            // same log level. A plugin that knows one username's attempts fail would
+            // otherwise be able to probe whether any specific player is online and
+            // whether a token is valid independently; conflating them removes that
+            // signal. The chosen word is "rejected".
+            val handle = registry.attach(attach.username, attach.token, this)
             if (handle == null) {
-                log.fine("no session for '$username' from ${ctx.channel().remoteAddress()}")
+                log.fine("attach rejected for '${attach.username}' from ${ctx.channel().remoteAddress()}")
                 ctx.close()
                 return
             }
             attachment = handle
-            log.fine("plugin attached to session '$username'")
+            log.fine("plugin attached to session '${attach.username}'")
             return
         }
         // Phase 2c and beyond: additional message types (click events, keepalive) go

@@ -12,25 +12,42 @@ package gateway.plugin
  */
 internal object VoidburnPluginMessages {
     /**
-     * Shape: `{"type":"attach","username":"..."}`. Returns the username on a valid
-     * message, or null when the payload is anything else. Extra top-level string fields
-     * are tolerated (future-compatible); non-string fields are skipped structurally.
+     * Shape: `{"type":"attach","username":"...","token":"..."}`. Both username and
+     * token are required strings. Returns the parsed pair when the payload matches,
+     * or null on anything else. Extra top-level string fields are tolerated
+     * (future-compatible); non-string fields are skipped structurally.
+     *
+     * The token is validated semantically by the registry against the session's own
+     * mint; this parser only enforces the shape (non-empty, under the length cap).
      *
      * Hostile payloads that this rejects:
-     *   - `{"type":"attach","username":"Alice"` — missing closing brace
-     *   - `{"nested":{"type":"attach","username":"Alice"}}` — fields are nested
-     *   - `{"type":"attach","username":"\uGGGG"}` — malformed unicode escape
-     *   - `{"type":"attach","username":"Alice"}  trailing` — trailing garbage
+     *   - `{"type":"attach","username":"A"` — missing closing brace
+     *   - `{"nested":{"type":"attach","username":"A","token":"T"}}` — fields are nested
+     *   - `{"type":"attach","username":"A","token":"T\uGGGG"}` — malformed unicode escape
+     *   - `{"type":"attach","username":"A","token":"T"}  trailing` — trailing garbage
+     *   - Missing token or empty token
      */
-    fun parseAttach(json: String): String? {
+    data class Attach(val username: String, val token: String)
+
+    fun parseAttach(json: String): Attach? {
         val obj = parseTopLevelObject(json) ?: return null
         if (obj["type"] != "attach") return null
         val username = obj["username"] ?: return null
         if (username.isEmpty() || username.length > MAX_USERNAME_LENGTH) return null
-        return username
+        val token = obj["token"] ?: return null
+        if (token.isEmpty() || token.length > MAX_TOKEN_LENGTH) return null
+        return Attach(username, token)
     }
 
     private const val MAX_USERNAME_LENGTH = 32
+
+    /**
+     * Upper bound on token length the parser will accept. Phase 2c-1 mints a 32-byte
+     * random token encoded as base64 (≈44 chars) with dashes for readability (≈52
+     * chars); 128 gives generous headroom for a future HMAC-style replacement without
+     * changing the shape contract.
+     */
+    private const val MAX_TOKEN_LENGTH = 128
 
     /**
      * Maximum structural nesting depth the parser will walk. Attach payloads have no
