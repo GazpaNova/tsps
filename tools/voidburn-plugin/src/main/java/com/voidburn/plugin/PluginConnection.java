@@ -2,6 +2,7 @@ package com.voidburn.plugin;
 
 import java.time.Duration;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -44,6 +45,15 @@ final class PluginConnection {
     /** How often OkHttp sends a WebSocket ping frame. Must be below the gateway's idle timeout (not currently enforced, but future-proof). */
     private static final Duration PING_INTERVAL = Duration.ofSeconds(20);
 
+    /**
+     * How long a connection must stay open after the handshake before we treat
+     * it as a sign of health and reset the backoff. Long enough to span a
+     * typical attach rejection round trip (upgrade, send attach, server closes
+     * on auth failure, local onClosed fires), so a wrong-token loop does NOT
+     * keep resetting its retry timer. 10 seconds leaves plenty of headroom.
+     */
+    private static final Duration STABILITY_WINDOW = Duration.ofSeconds(10);
+
     private final String url;
     private final String username;
     private final String token;
@@ -54,6 +64,8 @@ final class PluginConnection {
 
     private volatile WebSocket webSocket;
     private volatile long nextBackoffMs = INITIAL_BACKOFF_MS;
+    /** Scheduled stability-confirmation task; cancelled on close or stop. */
+    private volatile ScheduledFuture<?> stabilityTask;
 
     PluginConnection(String url, String username, String token, Consumer<String> frameHandler) {
         this.url = url;
@@ -86,6 +98,8 @@ final class PluginConnection {
      */
     void stop() {
         if (!stopped.compareAndSet(false, true)) return;
+        ScheduledFuture<?> st = stabilityTask;
+        if (st != null) st.cancel(false);
         WebSocket ws = webSocket;
         if (ws != null) {
             ws.close(1000, "plugin shutting down");
@@ -104,7 +118,39 @@ final class PluginConnection {
             .url(url)
             .build();
         log.debug("Voidburn plugin: connecting to {} as {}", url, username);
-        webSocket = httpClient.newWebSocket(request, new Listener());
+        WebSocket ws = httpClient.newWebSocket(request, new Listener());
+        // Fence against a stop() that ran between the stopped.get() check above
+        // and now: if we lost the race, close the socket we just created rather
+        // than publishing it into `webSocket` where a late onOpen could run
+        // against a connection the owner thinks is dead.
+        if (stopped.get()) {
+            ws.close(1000, "stopped during connect");
+            return;
+        }
+        webSocket = ws;
+    }
+
+    private void scheduleStabilityConfirmation() {
+        if (stopped.get()) return;
+        try {
+            stabilityTask = reconnectExecutor.schedule(() -> {
+                // If we're still open (no onClosed/onFailure cancelled us in
+                // the meantime) and not stopped, the connection has lived past
+                // the window — treat as healthy and reset backoff.
+                if (!stopped.get()) {
+                    nextBackoffMs = INITIAL_BACKOFF_MS;
+                    log.debug("Voidburn plugin: connection stable; backoff reset");
+                }
+            }, STABILITY_WINDOW.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // stop() ran; nothing to do.
+        }
+    }
+
+    private void cancelStabilityConfirmation() {
+        ScheduledFuture<?> st = stabilityTask;
+        if (st != null) st.cancel(false);
+        stabilityTask = null;
     }
 
     private void scheduleReconnect() {
@@ -122,16 +168,26 @@ final class PluginConnection {
     private final class Listener extends WebSocketListener {
         @Override
         public void onOpen(WebSocket webSocket, Response response) {
+            // Fence against a stop() that ran during the handshake. If the
+            // connection was torn down before onOpen landed, close the socket
+            // and do nothing — sending attach would leak credentials onto a
+            // connection the owner already considers dead.
+            if (stopped.get()) {
+                webSocket.close(1000, "stopped before attach");
+                return;
+            }
             log.info("Voidburn plugin: connected, sending attach for {}", username);
-            // First and only frame for Phase 2c-2a: the attach message. The
-            // gateway accepts it or closes the connection; either way, future
-            // frames arrive through onMessage.
+            // Send attach. The gateway accepts it (and starts forwarding
+            // widget frames) or closes the connection on auth failure; both
+            // land in onClosed/onFailure below.
             webSocket.send(AttachMessage.build(username, token));
-            // Reset backoff on a healthy connection. We can't tell here whether
-            // the attach authorized — a bad token will close the socket in
-            // onClosed — but a successful TCP+WS handshake means the gateway
-            // is reachable, so the next failure's backoff can start over.
-            nextBackoffMs = INITIAL_BACKOFF_MS;
+            // Do NOT reset backoff here. A wrong token still gets a successful
+            // WS handshake before the server closes on auth failure; resetting
+            // here would make bad-token retries loop at 1s forever instead of
+            // climbing to the 30s cap. Backoff is reset only after the
+            // connection has stayed open past STABILITY_WINDOW — see
+            // scheduleStabilityConfirmation().
+            scheduleStabilityConfirmation();
         }
 
         @Override
@@ -156,6 +212,7 @@ final class PluginConnection {
         @Override
         public void onClosed(WebSocket webSocket, int code, String reason) {
             log.info("Voidburn plugin: connection closed (code={}, reason={})", code, reason);
+            cancelStabilityConfirmation();
             PluginConnection.this.webSocket = null;
             scheduleReconnect();
         }
@@ -165,6 +222,7 @@ final class PluginConnection {
             // Lower level than onClosed — connection refused, DNS failure, bad
             // protocol. Log and reconnect through the same backoff.
             log.info("Voidburn plugin: connection failed: {}", t.getMessage());
+            cancelStabilityConfirmation();
             PluginConnection.this.webSocket = null;
             scheduleReconnect();
         }

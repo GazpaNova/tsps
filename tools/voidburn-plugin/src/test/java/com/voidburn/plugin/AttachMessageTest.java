@@ -8,6 +8,10 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
 
+// Note: JsonParser.parseString(String) is a Gson 2.8.6+ API. Pinned RuneLite
+// 1.13.3 brings Gson 2.8.5, which only exposes the instance parse method.
+// We use the instance form for forward compatibility with both.
+
 /**
  * The gateway accepts attach messages of a very specific shape; its parser is
  * covered by VoidburnPluginMessagesTest in runelite-gateway. These tests pin
@@ -19,8 +23,9 @@ import org.junit.jupiter.api.Test;
  */
 class AttachMessageTest {
 
+    @SuppressWarnings("deprecation") // instance form kept for Gson 2.8.5 compatibility
     private JsonObject parse(String json) {
-        return JsonParser.parseString(json).getAsJsonObject();
+        return new JsonParser().parse(json).getAsJsonObject();
     }
 
     @Test

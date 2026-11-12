@@ -4,8 +4,10 @@ Lets RuneLite users on Voidburn see server-sent custom interfaces (MOTD, custom
 shops, teleport menus — anything whose group id is `>= 30000`) that the official
 OSRS client has no cached definition for.
 
-Build artifact: a RuneLite plugin JAR the player drops into their
-`~/.runelite/externalmanager/plugins/` directory (or sideloads via `-classpath`).
+Build artifact: a RuneLite plugin JAR. For now it's loaded through a small
+developer launcher (`VoidburnPluginLauncher`) that registers the plugin with
+`ExternalPluginManager.loadBuiltin` before launching RuneLite. User-facing
+distribution via the RuneLite Plugin Hub is a future phase.
 
 ```
 RuneLite ─ plugin ──── WebSocket /plugin ────▶ Voidburn gateway
@@ -27,26 +29,42 @@ typed shapes or draw anything on the RuneLite canvas — that is Phase 2c-2b
 ## Build
 
 You need Java 21 and network access to `repo.runelite.net` for the
-`net.runelite:client` dependency.
+`net.runelite:client` dependency. This module has no wrapper of its own;
+the repository's existing Gradle wrapper under `runelite-gateway/` drives it:
 
 ```bash
-cd tools/voidburn-plugin
-./gradlew test build
+bash runelite-gateway/gradlew -p tools/voidburn-plugin test build
 ```
 
-The compiled JAR is `build/libs/voidburn-plugin-*.jar`.
+The compiled JAR is `build/libs/voidburn-plugin-0.1.0.jar`.
 
-## Install (dev workflow)
+## Run (dev workflow)
 
-1. Build a JAR as above.
-2. Copy it into `~/.runelite/externalmanager/plugins/` (create the directory if
-   needed). Or sideload with `-classpath` when running RuneLite's launcher.
-3. Start RuneLite. The plugin appears in the plugins list as "Voidburn".
-4. Open its config:
+Stock RuneLite 1.13.3 loads external plugins via
+`ExternalPluginManager.loadBuiltin(…)` before `RuneLite.main(…)` — not from
+a drop-in directory, and not from an ordinary classpath entry. This module
+ships a small launcher at `src/test/java/com/voidburn/plugin/VoidburnPluginLauncher.java`
+that follows the stock pattern.
+
+To run RuneLite with the plugin loaded during development:
+
+- From an IDE: Run `com.voidburn.plugin.VoidburnPluginLauncher` as a Java
+  application. Program arguments are forwarded to `RuneLite.main(args)`;
+  pass `--developer-mode` to enable developer tooling.
+- From the command line: launch the test classpath directly. The exact
+  invocation depends on how you resolve the RuneLite jar (Gradle, your
+  IDE's classpath, or an exported script); see RuneLite's own
+  [example-plugin](https://github.com/runelite/example-plugin) for the
+  canonical shape.
+
+Once RuneLite is up:
+
+1. Open the settings panel for the "Voidburn" plugin.
+2. Fill in:
    - **Gateway URL** — e.g. `ws://127.0.0.1:8081/plugin` for a local gateway.
    - **OSRS username** — your in-game display name, case-sensitive.
-   - **Session token** — paste the token the server messaged you at login.
-5. The plugin connects and attaches. See the RuneLite log for frames received.
+   - **Session token** — paste the token Voidburn messaged you after login.
+3. The plugin connects, authenticates, and logs received frames at DEBUG.
 
 The token rotates every time you log in; paste in the new one if you relog.
 
