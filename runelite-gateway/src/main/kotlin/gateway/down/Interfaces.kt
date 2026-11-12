@@ -3,6 +3,7 @@ package gateway.down
 import gateway.coverage.DropCounter
 import gateway.session.InterfaceTree
 import gateway.session.VarpMirror
+import gateway.session.VoidburnPluginChannel
 import gateway.tsps.TspsPacket
 import gateway.tsps.TspsReader
 import gateway.tsps.TspsServerPacket
@@ -44,6 +45,13 @@ class Interfaces(
     /** Whether the client has this component; anything aimed at one it hasn't is dropped. */
     private val exists: (Int) -> Boolean,
     private val send: (OutgoingGameMessage) -> Unit,
+    /**
+     * Supplier of the Voidburn RuneLite plugin channel for this session, if a plugin is
+     * connected. When it returns non-null, custom-interface packets (group id >= 30000)
+     * are serialized as JSON and sent to the plugin instead of being dropped. The
+     * default supplier returns null, so behavior is unchanged for stock clients.
+     */
+    private val voidburnChannel: () -> VoidburnPluginChannel? = { null },
 ) {
     /** Returns false for a message this translator doesn't handle. */
     fun handle(packet: TspsPacket): Boolean {
@@ -53,7 +61,14 @@ class Interfaces(
             TspsServerPacket.WIDGET_OPEN -> {
                 val group = reader.u16()
                 val modal = reader.u8() != 0
-                if (!modal || group >= CUSTOM_INTERFACE_START) {
+                if (group >= CUSTOM_INTERFACE_START) {
+                    // Custom interface: forward to plugin if connected, otherwise drop
+                    // as before. A non-modal custom-group open is unusual but passed
+                    // through as a plain open; the plugin treats "modal" as advisory.
+                    if (!forwardCustomInterface("widget_open", mapOf("group" to group, "modal" to modal))) {
+                        DropCounter.down(packet.opcode)
+                    }
+                } else if (!modal) {
                     DropCounter.down(packet.opcode)
                 } else {
                     val target = tree.modalOpened(group)
@@ -137,6 +152,18 @@ class Interfaces(
      * same way, after setting the client's window mode to match.
      */
     private fun setRoot(group: Int) {
+        // Custom-interface root (group >= 30000) is not in the cache. The client's IfOpenTop
+        // would set the root pointer to an unknown group and leave the player on a blank
+        // screen (this is the P1-c blocker the browser custom-root-fetch patch addresses for
+        // the browser). On RuneLite, if a Voidburn plugin is connected we forward the
+        // root change to it; otherwise we drop and the tsps-side eligibility check keeps
+        // RuneLite-no-plugin sessions on the stock welcome flow so this branch never fires.
+        if (group >= CUSTOM_INTERFACE_START) {
+            if (!forwardCustomInterface("widget_set_root", mapOf("group" to group))) {
+                DropCounter.down(TspsServerPacket.WIDGET_SET_ROOT)
+            }
+            return
+        }
         val from = tree.root
         val welcome = welcomeShown
         welcomeShown = group == WELCOME_SCREEN
@@ -176,7 +203,18 @@ class Interfaces(
         val postScripts = scripts(reader)
         preScripts.forEach(send)
         if (group >= CUSTOM_INTERFACE_START) {
-            DropCounter.down(TspsServerPacket.WIDGET_OPEN_SUB)
+            // Custom sub-interface: forward to plugin with the full bundle, else drop.
+            // Pre-scripts already ran via the regular path above; the plugin only needs
+            // the group/target/type and the component hidden-state list.
+            //
+            // "type" is reserved as the top-level event discriminator by VoidburnPluginJson,
+            // so the sub-interface's numeric interface type goes out as "interfaceType"
+            // to avoid the key collision v1 shipped (Codex Phase 2a review).
+            val forwarded = forwardCustomInterface(
+                "widget_open_sub",
+                mapOf("rawTarget" to raw, "target" to target, "group" to group, "interfaceType" to type, "hiddenUids" to hidden),
+            )
+            if (!forwarded) DropCounter.down(TspsServerPacket.WIDGET_OPEN_SUB)
             return
         }
         tree.gameframe(raw, mounted = true)
@@ -265,6 +303,23 @@ class Interfaces(
     private fun dropped(uid: Int) = DropCounter.missingComponent(uid)
 
     private fun TspsReader.optionalU8() = if (remaining > 0) u8() else 0
+
+    /**
+     * Serializes a custom-interface event as JSON and sends it to the plugin, returning
+     * true when a plugin is connected and the message was handed off (delivery is
+     * best-effort; the channel decides what "delivered" means). Returns false when no
+     * plugin channel is attached, so the caller can drop as before.
+     *
+     * Message shape: `{"type":<type>, ...fields}`. Keys are stable; new event types can
+     * be added without breaking existing ones because the plugin ignores unknowns.
+     * Everything is primitives + lists of primitives, so the encoder stays trivial and
+     * the plugin can use any JSON library.
+     */
+    private fun forwardCustomInterface(type: String, fields: Map<String, Any?>): Boolean {
+        val channel = voidburnChannel() ?: return false
+        channel.send(VoidburnPluginJson.encode(type, fields))
+        return true
+    }
 
     private fun Int.signed16() = if (this == 0xFFFF) -1 else this
 

@@ -85,7 +85,14 @@ class GatewaySession(
     private val translators: List<(TspsPacket) -> Boolean> by lazy {
         listOf(interfaces::handle, items::handle, groundItems::handle, social::handle, clans::handle, worldUpdates::handle, trade::handle)
     }
-    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send)
+    /**
+     * Voidburn RuneLite plugin side channel, null until a plugin connects for this session.
+     * Interfaces consults this when deciding whether to forward custom-interface packets
+     * (group id >= 30000) instead of dropping them. Attached by Phase 2b's WebSocket
+     * server; currently always null, so behavior is unchanged.
+     */
+    @Volatile var voidburnPluginChannel: VoidburnPluginChannel? = null
+    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send, { voidburnPluginChannel })
     private val upstream =
         Upstream(
             varps,
