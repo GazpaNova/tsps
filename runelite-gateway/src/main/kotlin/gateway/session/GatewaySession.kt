@@ -248,6 +248,12 @@ class GatewaySession(
     private fun onHandshake(handshake: TspsHandshake) {
         this.handshake = handshake
         state = State.AWAITING_SCENE
+        // Register with the Voidburn plugin registry so a plugin WebSocket can attach to
+        // this session by its OSRS display name. The registry's `attach` callback writes
+        // into voidburnPluginChannel; detach writes null. Unregistered in close().
+        context.voidburnPluginRegistry.register(handshake.name) { channel ->
+            voidburnPluginChannel = channel
+        }
         beforeHandshake.forEach(::onGamePacket)
         beforeHandshake.clear()
     }
@@ -534,6 +540,11 @@ class GatewaySession(
     private fun close() {
         if (state == State.CLOSED) return
         state = State.CLOSED
+        // Unregister from the Voidburn plugin registry so a late-arriving plugin attach
+        // doesn't bind to a torn-down session. Idempotent — safe when handshake never
+        // completed. The attach callback itself writes null into voidburnPluginChannel
+        // on detach, but a disconnected session no longer calls Interfaces anyway.
+        if (::handshake.isInitialized) context.voidburnPluginRegistry.unregister(handshake.name)
         if (::tsps.isInitialized) tsps.close()
         session?.flush()
         session?.requestClose()

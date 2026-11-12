@@ -30,6 +30,18 @@ class GatewayContext(
     val loginUtilities = if (config.loginUtilitiesPort > 0) {
         LoginBroker(config.tspsUrl, revision, config.loginUtilitiesPort, allowLoopbackProxy = config.loginUtilitiesTrustLoopbackProxy)
     } else null
+    /** Voidburn plugin session lookup; see gateway.plugin.VoidburnPluginRegistry. */
+    val voidburnPluginRegistry = gateway.plugin.VoidburnPluginRegistry()
+    /**
+     * WebSocket listener the Voidburn RuneLite plugin connects to. Started by Gateway.start
+     * after the main rsprot network is up, and stopped during shutdown. No-op when
+     * voidburnPluginPort is 0 (default); see the config docstring.
+     */
+    val voidburnPluginServer = gateway.plugin.VoidburnPluginServer(
+        config.voidburnPluginPort,
+        bindHost = "127.0.0.1",
+        registry = voidburnPluginRegistry,
+    )
     val objs = ObjTypes(cache)
     val npcTypes = NpcTypes(cache)
     val components = InterfaceComponents(cache)

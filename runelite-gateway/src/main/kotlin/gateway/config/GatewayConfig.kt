@@ -24,6 +24,7 @@ data class GatewayConfig(
     val bindHost: String = DEFAULT_BIND_HOST,
     val loginUtilitiesPort: Int = 0,
     val loginUtilitiesTrustLoopbackProxy: Boolean = false,
+    val voidburnPluginPort: Int = 0,
 ) {
     val tspsUrl: String get() = "ws://127.0.0.1:$websocketPort/"
 
@@ -48,6 +49,7 @@ data class GatewayConfig(
                 bindHost = env["GATEWAY_BIND_HOST"]?.takeIf { it.isNotBlank() } ?: DEFAULT_BIND_HOST,
                 loginUtilitiesPort = (env["GATEWAY_LOGIN_HTTP_PORT"] ?: env["LOGIN_UTILITIES_PORT"])?.toInt() ?: 0,
                 loginUtilitiesTrustLoopbackProxy = (env["GATEWAY_LOGIN_TRUST_LOOPBACK_PROXY"] ?: env["LOGIN_UTILITIES_TRUST_LOOPBACK_PROXY"]) == "true",
+                voidburnPluginPort = env["VOIDBURN_PLUGIN_PORT"]?.toInt() ?: 0,
             )
         }
 

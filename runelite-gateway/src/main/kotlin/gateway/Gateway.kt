@@ -24,6 +24,7 @@ class Gateway private constructor(
     private val context: GatewayContext,
 ) {
     fun stop() {
+        context.voidburnPluginServer.stop()
         context.loginUtilities?.close()
         network.shutdownNow()
     }
@@ -43,6 +44,8 @@ class Gateway private constructor(
             val network = GatewayNetwork(config.bindHost, config.gatewayPort, rsa, huffman, CacheJs5Provider(ClientCache(cache)), GatewayConnections(context)).build()
             UpdatePlayerModel.install(network)
             network.start()
+            // Start after rsprot so a plugin-port bind failure doesn't stop the main game listener.
+            context.voidburnPluginServer.start()
             return Gateway(config, rsa, revision, network, context)
         }
     }

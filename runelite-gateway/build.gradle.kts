@@ -12,11 +12,11 @@ dependencies {
     implementation(libs.rsprot.api)
     implementation(libs.rsprot.desktop)
     implementation(libs.commons.compress)
+    implementation("io.netty:netty-codec-http")
     // rsprot logs through SLF4J; without a binding its errors (closed channels included) vanish.
     runtimeOnly(libs.slf4j.simple)
     testImplementation("net.rsprox:osrs-242")
     testImplementation("net.rsprox:protocol")
-    testImplementation("io.netty:netty-codec-http")
     testImplementation("net.rsprox:cache-api")
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)
