@@ -24,10 +24,10 @@ import java.util.concurrent.ConcurrentHashMap
  * Ordering: the map mutation and the attach-callback publication are serialized under
  * one monitor so that two concurrent attaches (or an attach racing a detach) can never
  * leave the registry pointing at one channel while the session's own field points at
- * another. Attach callbacks are expected to do trivial field assignment only (see
- * GatewaySession.voidburnPluginRegistration); a callback that re-entered the registry
- * would deadlock, which is the intended signal. The hot path is light (one or two
- * attaches per plugin connection), so single-monitor contention is not a concern.
+ * another. JVM monitors are reentrant, so re-entry does not automatically deadlock.
+ * Callbacks must be simple, non-blocking and non-reentrant by contract. This is what the
+ * current production callback does: one field assignment (see GatewaySession's
+ * voidburnPluginChannel setter path) and no I/O.
  *
  * Security note for Phase 2c: this patch does NOT authenticate attach messages. Attach
  * only writes into the registry; whether the GatewaySession actually uses the channel is
