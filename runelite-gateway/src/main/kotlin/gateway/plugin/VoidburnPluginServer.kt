@@ -33,9 +33,15 @@ import java.util.logging.Logger
  * as the first TEXT frame — and then the connection becomes the session's
  * VoidburnPluginChannel until it closes.
  *
- * Bind: loopback-only unless the config explicitly asks for another address. Phase 2b
- * does not authenticate attach messages beyond the registry lookup; see the registry
- * docstring for the Phase 2c follow-up gate.
+ * Bind: loopback-only unless the config explicitly asks for another address. A failed
+ * bind shuts the event-loop groups allocated for that start() call back down and
+ * rethrows; the caller decides whether to abort startup or continue without the listener.
+ *
+ * Security: this listener does NOT authenticate attach messages. Any client that can
+ * reach the port and names a logged-in username wins the lookup. Forwarding is
+ * separately gated in the GatewaySession via voidburnPluginAuthenticated, which Phase 2b
+ * never sets to true — so an unauthenticated attach is inert until Phase 2c lands
+ * authentication. The port defaults to 0 (listener off). See the registry docstring.
  *
  * Not reused for other Netty servers in the gateway. rsprot's own ServerBootstrap
  * handles the game TCP listener; this is a small separate stack for the plugin side
@@ -52,32 +58,52 @@ class VoidburnPluginServer(
 
     /**
      * Start the listener. No-op when port is 0 (disabled by default). Blocking until the
-     * bind completes; a failed bind throws.
+     * bind completes. On a bind failure, the event-loop groups allocated for this start
+     * are shut down synchronously and the original exception is rethrown — the server
+     * is left in the same "not started" state the call began in, so a caller catching
+     * the exception can carry on without this listener.
      */
     fun start() {
         if (port == 0) return
+        if (listenerChannel != null) return // already started
         val boss = NioEventLoopGroup(1)
         val worker = NioEventLoopGroup()
-        bossGroup = boss
-        workerGroup = worker
-        val bootstrap = ServerBootstrap()
-            .group(boss, worker)
-            .channel(NioServerSocketChannel::class.java)
-            .childOption(ChannelOption.TCP_NODELAY, true)
-            .childHandler(object : ChannelInitializer<SocketChannel>() {
-                override fun initChannel(ch: SocketChannel) {
-                    ch.pipeline()
-                        .addLast(HttpServerCodec())
-                        .addLast(HttpObjectAggregator(MAX_HTTP_CONTENT_BYTES))
-                        .addLast(WebSocketServerProtocolHandler(WEBSOCKET_PATH, null, true, MAX_FRAME_BYTES.toInt()))
-                        .addLast(PluginConnectionHandler(registry))
-                }
-            })
-        listenerChannel = bootstrap.bind(InetSocketAddress(bindHost, port)).sync().channel()
+        try {
+            val bootstrap = ServerBootstrap()
+                .group(boss, worker)
+                .channel(NioServerSocketChannel::class.java)
+                .childOption(ChannelOption.TCP_NODELAY, true)
+                .childHandler(object : ChannelInitializer<SocketChannel>() {
+                    override fun initChannel(ch: SocketChannel) {
+                        ch.pipeline()
+                            .addLast(HttpServerCodec())
+                            .addLast(HttpObjectAggregator(MAX_HTTP_CONTENT_BYTES))
+                            .addLast(WebSocketServerProtocolHandler(WEBSOCKET_PATH, null, true, MAX_FRAME_BYTES.toInt()))
+                            .addLast(PluginConnectionHandler(registry))
+                    }
+                })
+            val channel = bootstrap.bind(InetSocketAddress(bindHost, port)).sync().channel()
+            // Only commit the groups once bind has succeeded; otherwise stop() could run
+            // on partially-initialized state.
+            listenerChannel = channel
+            bossGroup = boss
+            workerGroup = worker
+        } catch (t: Throwable) {
+            // Bind failed (port in use, invalid host, ...). Shut the groups down so we
+            // don't leak threads, then rethrow for the caller to handle.
+            try {
+                worker.shutdownGracefully().awaitUninterruptibly()
+                boss.shutdownGracefully().awaitUninterruptibly()
+            } catch (cleanup: Throwable) {
+                t.addSuppressed(cleanup)
+            }
+            throw t
+        }
     }
 
     /**
-     * Shut the listener and every active connection down. Idempotent.
+     * Shut the listener and every active connection down. Idempotent, and safe to call
+     * after a failed start() (which left this instance in the never-started state).
      */
     fun stop() {
         listenerChannel?.close()?.awaitUninterruptibly()
@@ -100,11 +126,16 @@ class VoidburnPluginServer(
 /**
  * Per-connection state. Accepts exactly one attach frame to resolve the session, then
  * acts as that session's VoidburnPluginChannel until closed.
+ *
+ * Holds the Attachment handle returned by [VoidburnPluginRegistry.attach] so that its
+ * detach-on-close is owner-scoped: if a second plugin instance attached to the same
+ * username in the meantime, this handler's detach is a no-op and leaves the newer
+ * attachment alone.
  */
 private class PluginConnectionHandler(
     private val registry: VoidburnPluginRegistry,
 ) : SimpleChannelInboundHandler<TextWebSocketFrame>(), VoidburnPluginChannel {
-    private var attachedUsername: String? = null
+    private var attachment: VoidburnPluginRegistry.Attachment? = null
     private var ctx: ChannelHandlerContext? = null
 
     override fun channelActive(ctx: ChannelHandlerContext) {
@@ -113,19 +144,20 @@ private class PluginConnectionHandler(
 
     override fun channelRead0(ctx: ChannelHandlerContext, frame: TextWebSocketFrame) {
         val payload = frame.text()
-        if (attachedUsername == null) {
+        if (attachment == null) {
             val username = VoidburnPluginMessages.parseAttach(payload)
             if (username == null) {
                 log.fine("rejecting malformed attach from ${ctx.channel().remoteAddress()}")
                 ctx.close()
                 return
             }
-            if (!registry.attach(username, this)) {
+            val handle = registry.attach(username, this)
+            if (handle == null) {
                 log.fine("no session for '$username' from ${ctx.channel().remoteAddress()}")
                 ctx.close()
                 return
             }
-            attachedUsername = username
+            attachment = handle
             log.fine("plugin attached to session '$username'")
             return
         }
@@ -137,10 +169,12 @@ private class PluginConnectionHandler(
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
-        val username = attachedUsername
-        if (username != null) {
-            registry.detach(username)
-            attachedUsername = null
+        val handle = attachment
+        if (handle != null) {
+            // Owner-scoped: if a newer channel replaced this attachment, detach is a
+            // no-op and leaves that replacement intact.
+            registry.detach(handle)
+            attachment = null
         }
         this.ctx = null
     }

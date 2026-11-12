@@ -25,10 +25,19 @@ class VoidburnPluginMessagesTest {
     }
 
     @Test
-    fun `extra fields are allowed and ignored`() {
+    fun `extra string fields are allowed and ignored`() {
         assertEquals(
             "Miguel",
             VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Miguel","note":"ignored"}"""),
+        )
+    }
+
+    @Test
+    fun `extra non-string fields are skipped structurally`() {
+        // The parser validates these values' structure but doesn't surface them.
+        assertEquals(
+            "Miguel",
+            VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Miguel","count":42,"flags":[1,2,3],"meta":{"k":"v"},"ok":true,"err":null}"""),
         )
     }
 
@@ -53,6 +62,41 @@ class VoidburnPluginMessagesTest {
         assertNull(VoidburnPluginMessages.parseAttach(""""attach""""))
         assertNull(VoidburnPluginMessages.parseAttach("""null"""))
         assertNull(VoidburnPluginMessages.parseAttach(""""""))
+        assertNull(VoidburnPluginMessages.parseAttach("""[]"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""42"""))
+    }
+
+    @Test
+    fun `missing closing brace is rejected`() {
+        // Regression: v1 accepted `{"type":"attach","username":"Alice"` — a loose
+        // substring scanner found the username before realizing the object never closed.
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Alice""""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Alice"""))
+    }
+
+    @Test
+    fun `nested object with target fields is rejected`() {
+        // Regression: v1 accepted `{"nested":{"type":"attach","username":"Alice"}}` —
+        // substring scanner thought "type" appeared as a top-level key.
+        assertNull(
+            VoidburnPluginMessages.parseAttach("""{"nested":{"type":"attach","username":"Alice"}}"""),
+        )
+        // Also when the nested object is in the "type" value's position.
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":{"type":"attach"},"username":"Alice"}"""))
+    }
+
+    @Test
+    fun `trailing garbage after the closing brace is rejected`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Miguel"}trailing"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Miguel"} {"type":"other"}"""))
+    }
+
+    @Test
+    fun `duplicate keys are rejected`() {
+        // Different JSON stacks disagree on duplicate handling — reject outright so the
+        // attach shape is unambiguous.
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","type":"other","username":"X"}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"username":"A","type":"attach","username":"B"}"""))
     }
 
     @Test
@@ -65,10 +109,31 @@ class VoidburnPluginMessagesTest {
 
     @Test
     fun `username unicode escape is decoded`() {
+        // "A" is 'A'.
         assertEquals(
             "aAb",
             VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"aAb"}"""),
         )
+    }
+
+    @Test
+    fun `malformed unicode escape returns null without throwing`() {
+        // Regression: v1 threw NumberFormatException on `\uGGGG`. Must return null safely.
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"\uGGGG"}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"\u00"}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"\u12"}"""))
+    }
+
+    @Test
+    fun `unknown escape returns null`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"\q"}"""))
+    }
+
+    @Test
+    fun `raw control characters in strings are rejected`() {
+        // Literal newline inside the quoted string (not escaped).
+        val withNewline = "{\"type\":\"attach\",\"username\":\"Mig\nuel\"}"
+        assertNull(VoidburnPluginMessages.parseAttach(withNewline))
     }
 
     @Test
@@ -83,7 +148,7 @@ class VoidburnPluginMessagesTest {
     }
 
     @Test
-    fun `truncated JSON returns null`() {
+    fun `truncated string literal returns null`() {
         assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":"Mig"""))
     }
 
@@ -91,5 +156,28 @@ class VoidburnPluginMessagesTest {
     fun `field appearing inside a string value is not accepted as the key`() {
         // The payload has "type" INSIDE the note value; the real type field is missing.
         assertNull(VoidburnPluginMessages.parseAttach("""{"note":"mentions \"type\":\"attach\"","username":"X"}"""))
+    }
+
+    @Test
+    fun `missing colon is rejected`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type" "attach","username":"Miguel"}"""))
+    }
+
+    @Test
+    fun `missing comma between fields is rejected`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach" "username":"Miguel"}"""))
+    }
+
+    @Test
+    fun `empty object is rejected for missing type`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{}"""))
+    }
+
+    @Test
+    fun `username value that is not a string is rejected`() {
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":42}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":null}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":true}"""))
+        assertNull(VoidburnPluginMessages.parseAttach("""{"type":"attach","username":{"nested":"x"}}"""))
     }
 }

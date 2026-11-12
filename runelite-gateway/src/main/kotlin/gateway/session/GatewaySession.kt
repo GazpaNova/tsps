@@ -86,13 +86,28 @@ class GatewaySession(
         listOf(interfaces::handle, items::handle, groundItems::handle, social::handle, clans::handle, worldUpdates::handle, trade::handle)
     }
     /**
-     * Voidburn RuneLite plugin side channel, null until a plugin connects for this session.
-     * Interfaces consults this when deciding whether to forward custom-interface packets
-     * (group id >= 30000) instead of dropping them. Attached by Phase 2b's WebSocket
-     * server; currently always null, so behavior is unchanged.
+     * Voidburn RuneLite plugin side channel, null until a plugin connects for this
+     * session. Attached by Phase 2b's WebSocket server through the registry callback.
+     *
+     * NOT consulted directly by Interfaces — forwarding is gated on authenticated()
+     * below, which Phase 2b never clears to true. A hostile unauthenticated client that
+     * knows a logged-in username can still cause this field to be written, but nothing
+     * reads it until Phase 2c lands authentication.
      */
     @Volatile var voidburnPluginChannel: VoidburnPluginChannel? = null
-    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send, { voidburnPluginChannel })
+
+    /**
+     * Whether forwarding to [voidburnPluginChannel] is currently permitted for this
+     * session. Phase 2b leaves this false for every session; Phase 2c flips it to true
+     * once a plugin attach message carries a valid session token. Interfaces reads this
+     * via its channel supplier, so a non-null but unauthenticated channel is inert.
+     */
+    @Volatile var voidburnPluginAuthenticated: Boolean = false
+
+    /** Handle from registering with the plugin registry; held so unregister is owner-scoped. */
+    private var voidburnPluginRegistration: gateway.plugin.VoidburnPluginRegistry.Registration? = null
+
+    private val interfaces = Interfaces(varps, InterfaceTree(context.enums), stockMarket, items::scriptInventories, context.components::exists, ::send, { if (voidburnPluginAuthenticated) voidburnPluginChannel else null })
     private val upstream =
         Upstream(
             varps,
@@ -250,8 +265,10 @@ class GatewaySession(
         state = State.AWAITING_SCENE
         // Register with the Voidburn plugin registry so a plugin WebSocket can attach to
         // this session by its OSRS display name. The registry's `attach` callback writes
-        // into voidburnPluginChannel; detach writes null. Unregistered in close().
-        context.voidburnPluginRegistry.register(handshake.name) { channel ->
+        // into voidburnPluginChannel; detach writes null. The returned handle is owner-
+        // scoped: unregistering with it is a no-op if a replacement session has taken
+        // over the slot. Unregistered in close().
+        voidburnPluginRegistration = context.voidburnPluginRegistry.register(handshake.name) { channel ->
             voidburnPluginChannel = channel
         }
         beforeHandshake.forEach(::onGamePacket)
@@ -541,10 +558,11 @@ class GatewaySession(
         if (state == State.CLOSED) return
         state = State.CLOSED
         // Unregister from the Voidburn plugin registry so a late-arriving plugin attach
-        // doesn't bind to a torn-down session. Idempotent — safe when handshake never
-        // completed. The attach callback itself writes null into voidburnPluginChannel
-        // on detach, but a disconnected session no longer calls Interfaces anyway.
-        if (::handshake.isInitialized) context.voidburnPluginRegistry.unregister(handshake.name)
+        // doesn't bind to a torn-down session. Owner-scoped: if a replacement session
+        // took over this username (reconnecting player), this unregister is a no-op and
+        // leaves the replacement in the registry.
+        voidburnPluginRegistration?.let { context.voidburnPluginRegistry.unregister(it) }
+        voidburnPluginRegistration = null
         if (::tsps.isInitialized) tsps.close()
         session?.flush()
         session?.requestClose()

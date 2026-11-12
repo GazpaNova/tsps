@@ -44,8 +44,16 @@ class Gateway private constructor(
             val network = GatewayNetwork(config.bindHost, config.gatewayPort, rsa, huffman, CacheJs5Provider(ClientCache(cache)), GatewayConnections(context)).build()
             UpdatePlayerModel.install(network)
             network.start()
-            // Start after rsprot so a plugin-port bind failure doesn't stop the main game listener.
-            context.voidburnPluginServer.start()
+            // The plugin listener is optional: if its port is in use or otherwise fails
+            // to bind, log it and continue — the game listener is already up and nothing
+            // else depends on the plugin side channel. Start it AFTER rsprot so this
+            // isolation never affects game startup, and so nothing need be unwound here.
+            try {
+                context.voidburnPluginServer.start()
+            } catch (t: Throwable) {
+                java.util.logging.Logger.getLogger("gateway.Gateway")
+                    .warning("Voidburn plugin listener failed to start: ${t.message}; continuing without it")
+            }
             return Gateway(config, rsa, revision, network, context)
         }
     }
