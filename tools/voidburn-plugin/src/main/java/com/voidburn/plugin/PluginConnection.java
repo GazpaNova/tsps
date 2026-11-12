@@ -222,26 +222,40 @@ final class PluginConnection {
 
         @Override
         public void onOpen(WebSocket ws, Response response) {
-            // The attach send must be atomic with its own stopped/obsolete
-            // check, or a stop() that interleaves between the check and the
-            // send would leak the token onto a connection the owner already
-            // tore down. Hold `lock` across both.
+            // The decision and the send must be atomic with respect to stop():
+            // if we release the lock between the stopped check and send(), a
+            // concurrent stop() can commit its state change in that window and
+            // we leak the attach onto a connection the owner has torn down.
+            // send() is also safe to call under the lock — OkHttp's
+            // WebSocket.send enqueues and returns without invoking any
+            // callback synchronously, so there's no risk of a re-entering
+            // listener callback blocking on `lock`.
+            //
+            // This holds regardless of whether the socket was already
+            // published into `webSocket` (the normal path) or not
+            // (OkHttp dispatcher pattern where the listener runs before
+            // newWebSocket returns): if stop() ran first, it set stopped=true
+            // and bumped attemptId, so this method sees the gate closed and
+            // closes the socket it was handed instead of sending.
             boolean doSend;
             synchronized (lock) {
                 doSend = !stopped && myAttempt == attemptId;
                 if (doSend) {
                     connectionOpen = true;
                     scheduleStabilityConfirmation(myAttempt);
+                    log.info(
+                        "Voidburn plugin: connected, sending attach for {} (attempt {})",
+                        username, myAttempt);
+                    ws.send(AttachMessage.build(username, token));
                 }
             }
-            if (doSend) {
-                log.info("Voidburn plugin: connected, sending attach for {} (attempt {})", username, myAttempt);
-                // send() is non-blocking (enqueue only); the queue is drained
-                // by OkHttp's writer thread. If stop() runs now and closes the
-                // socket before OkHttp flushes, OkHttp drops the queued frame.
-                ws.send(AttachMessage.build(username, token));
-            } else {
-                log.debug("Voidburn plugin: onOpen for obsolete attempt {} (current {}); closing", myAttempt, attemptId);
+            if (!doSend) {
+                log.debug(
+                    "Voidburn plugin: onOpen for obsolete attempt {} (current {}); closing",
+                    myAttempt, attemptId);
+                // Close outside the lock: OkHttp's close may invoke onClosed
+                // on this same dispatcher thread synchronously in some paths,
+                // and that callback takes `lock`.
                 ws.close(1000, "obsolete or stopped");
             }
         }
