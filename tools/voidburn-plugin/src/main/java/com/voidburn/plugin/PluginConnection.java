@@ -5,7 +5,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -27,11 +26,21 @@ import org.slf4j.LoggerFactory;
  * new one; this class deliberately does not try to re-authenticate a live
  * socket with different credentials.
  *
+ * Lifecycle state (webSocket, stopped flag, stabilityTask, attemptId,
+ * connectionOpen) is guarded by a single monitor. stop() acquires it before
+ * tearing down; connect(), onOpen, onClosed and onFailure each acquire it
+ * around their check-publish-send sequence, so an operation cannot pass its
+ * check and execute after a concurrent teardown committed. Per-attempt
+ * identity (attemptId) lets the stability task self-guard at run time: if
+ * schedule()'s return assignment races with a close callback, the task
+ * still refuses to run if its attempt is no longer current and open.
+ *
  * Threading: OkHttp invokes WebSocketListener callbacks on its own dispatcher
  * thread. The frame consumer may land on any thread, so the caller is
  * responsible for marshalling into RuneLite's client thread before touching
- * the game state. reconnects are scheduled on a single-thread executor owned
- * by this instance; stop() cancels any pending reconnect synchronously.
+ * the game state. Reconnects and stability confirmations are scheduled on a
+ * single-thread executor owned by this instance; stop() cancels any pending
+ * tasks synchronously under the lock.
  */
 final class PluginConnection {
     private static final Logger log = LoggerFactory.getLogger(PluginConnection.class);
@@ -60,12 +69,20 @@ final class PluginConnection {
     private final Consumer<String> frameHandler;
     private final OkHttpClient httpClient;
     private final ScheduledExecutorService reconnectExecutor;
-    private final AtomicBoolean stopped = new AtomicBoolean(false);
 
-    private volatile WebSocket webSocket;
-    private volatile long nextBackoffMs = INITIAL_BACKOFF_MS;
-    /** Scheduled stability-confirmation task; cancelled on close or stop. */
-    private volatile ScheduledFuture<?> stabilityTask;
+    /** Guards every mutation of the fields below. See class javadoc. */
+    private final Object lock = new Object();
+
+    /** All state below is guarded by `lock`. */
+    private boolean stopped = false;
+    private WebSocket webSocket;
+    private long nextBackoffMs = INITIAL_BACKOFF_MS;
+    /** Monotonic ID assigned to each connect() call. Listeners capture their ID and callbacks compare before acting. */
+    private long attemptId = 0;
+    /** True between a Listener's onOpen and its matching onClosed/onFailure. The stability task checks this to avoid reseting after a closed-before-stable attempt. */
+    private boolean connectionOpen = false;
+    /** Scheduled stability-confirmation task for the current attempt. Cancelled on close or stop. */
+    private ScheduledFuture<?> stabilityTask;
 
     PluginConnection(String url, String username, String token, Consumer<String> frameHandler) {
         this.url = url;
@@ -88,7 +105,6 @@ final class PluginConnection {
      * handshake runs on OkHttp's dispatcher. Safe to call once per instance.
      */
     void start() {
-        if (stopped.get()) return;
         connect();
     }
 
@@ -97,12 +113,24 @@ final class PluginConnection {
      * Idempotent; safe to call from any thread.
      */
     void stop() {
-        if (!stopped.compareAndSet(false, true)) return;
-        ScheduledFuture<?> st = stabilityTask;
-        if (st != null) st.cancel(false);
-        WebSocket ws = webSocket;
-        if (ws != null) {
-            ws.close(1000, "plugin shutting down");
+        WebSocket wsToClose;
+        synchronized (lock) {
+            if (stopped) return;
+            stopped = true;
+            // Advance the attempt counter so any pending callback — one that
+            // already captured an older ID — sees a mismatch and no-ops when
+            // it later takes the lock.
+            attemptId++;
+            connectionOpen = false;
+            if (stabilityTask != null) {
+                stabilityTask.cancel(false);
+                stabilityTask = null;
+            }
+            wsToClose = webSocket;
+            webSocket = null;
+        }
+        if (wsToClose != null) {
+            wsToClose.close(1000, "plugin shutting down");
         }
         reconnectExecutor.shutdownNow();
         // OkHttp's dispatcher keeps non-daemon threads alive for ~60s after the
@@ -113,118 +141,159 @@ final class PluginConnection {
     }
 
     private void connect() {
-        if (stopped.get()) return;
-        Request request = new Request.Builder()
-            .url(url)
-            .build();
-        log.debug("Voidburn plugin: connecting to {} as {}", url, username);
-        WebSocket ws = httpClient.newWebSocket(request, new Listener());
-        // Fence against a stop() that ran between the stopped.get() check above
-        // and now: if we lost the race, close the socket we just created rather
-        // than publishing it into `webSocket` where a late onOpen could run
-        // against a connection the owner thinks is dead.
-        if (stopped.get()) {
-            ws.close(1000, "stopped during connect");
-            return;
+        Listener listener;
+        long myAttempt;
+        synchronized (lock) {
+            if (stopped) return;
+            myAttempt = ++attemptId;
+            listener = new Listener(myAttempt);
+            log.debug("Voidburn plugin: connecting to {} as {} (attempt {})", url, username, myAttempt);
         }
-        webSocket = ws;
+        // newWebSocket is non-blocking (returns immediately; handshake runs on
+        // OkHttp's dispatcher), but it allocates native resources and we want
+        // its return value stored atomically with the up-to-date attempt
+        // check. Re-enter the lock for publication.
+        Request request = new Request.Builder().url(url).build();
+        WebSocket ws = httpClient.newWebSocket(request, listener);
+        boolean obsolete;
+        synchronized (lock) {
+            obsolete = stopped || myAttempt != attemptId;
+            if (!obsolete) {
+                webSocket = ws;
+            }
+        }
+        if (obsolete) {
+            ws.close(1000, "stopped during connect");
+        }
     }
 
-    private void scheduleStabilityConfirmation() {
-        if (stopped.get()) return;
+    private void scheduleStabilityConfirmation(long forAttempt) {
+        // Called from onOpen while holding `lock`. We stay inside the lock to
+        // assign the returned future, so cancelStabilityConfirmation sees it.
         try {
-            stabilityTask = reconnectExecutor.schedule(() -> {
-                // If we're still open (no onClosed/onFailure cancelled us in
-                // the meantime) and not stopped, the connection has lived past
-                // the window — treat as healthy and reset backoff.
-                if (!stopped.get()) {
-                    nextBackoffMs = INITIAL_BACKOFF_MS;
-                    log.debug("Voidburn plugin: connection stable; backoff reset");
-                }
-            }, STABILITY_WINDOW.toMillis(), TimeUnit.MILLISECONDS);
+            stabilityTask = reconnectExecutor.schedule(
+                () -> runStabilityConfirmation(forAttempt),
+                STABILITY_WINDOW.toMillis(), TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
             // stop() ran; nothing to do.
         }
     }
 
+    private void runStabilityConfirmation(long forAttempt) {
+        synchronized (lock) {
+            // Self-guard: only reset backoff if the attempt that scheduled us
+            // is STILL the current one AND the connection is still open. If
+            // onClosed/onFailure already ran (even if its cancel raced with
+            // our publication), connectionOpen is false and we no-op.
+            if (!stopped && connectionOpen && forAttempt == attemptId) {
+                nextBackoffMs = INITIAL_BACKOFF_MS;
+                log.debug("Voidburn plugin: connection stable; backoff reset");
+            }
+        }
+    }
+
     private void cancelStabilityConfirmation() {
-        ScheduledFuture<?> st = stabilityTask;
-        if (st != null) st.cancel(false);
-        stabilityTask = null;
+        // Caller holds `lock`.
+        if (stabilityTask != null) {
+            stabilityTask.cancel(false);
+            stabilityTask = null;
+        }
     }
 
     private void scheduleReconnect() {
-        if (stopped.get()) return;
+        // Caller holds `lock`.
+        if (stopped) return;
         long delay = nextBackoffMs;
         nextBackoffMs = Math.min(nextBackoffMs * 2, MAX_BACKOFF_MS);
         log.info("Voidburn plugin: reconnecting in {} ms", delay);
         try {
             reconnectExecutor.schedule(this::connect, delay, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.RejectedExecutionException ignored) {
-            // stop() ran after we checked stopped.get(); fine to drop the retry.
+            // stop() ran after we checked stopped; fine to drop the retry.
         }
     }
 
     private final class Listener extends WebSocketListener {
-        @Override
-        public void onOpen(WebSocket webSocket, Response response) {
-            // Fence against a stop() that ran during the handshake. If the
-            // connection was torn down before onOpen landed, close the socket
-            // and do nothing — sending attach would leak credentials onto a
-            // connection the owner already considers dead.
-            if (stopped.get()) {
-                webSocket.close(1000, "stopped before attach");
-                return;
-            }
-            log.info("Voidburn plugin: connected, sending attach for {}", username);
-            // Send attach. The gateway accepts it (and starts forwarding
-            // widget frames) or closes the connection on auth failure; both
-            // land in onClosed/onFailure below.
-            webSocket.send(AttachMessage.build(username, token));
-            // Do NOT reset backoff here. A wrong token still gets a successful
-            // WS handshake before the server closes on auth failure; resetting
-            // here would make bad-token retries loop at 1s forever instead of
-            // climbing to the 30s cap. Backoff is reset only after the
-            // connection has stayed open past STABILITY_WINDOW — see
-            // scheduleStabilityConfirmation().
-            scheduleStabilityConfirmation();
+        private final long myAttempt;
+
+        Listener(long myAttempt) {
+            this.myAttempt = myAttempt;
         }
 
         @Override
-        public void onMessage(WebSocket webSocket, String text) {
+        public void onOpen(WebSocket ws, Response response) {
+            // The attach send must be atomic with its own stopped/obsolete
+            // check, or a stop() that interleaves between the check and the
+            // send would leak the token onto a connection the owner already
+            // tore down. Hold `lock` across both.
+            boolean doSend;
+            synchronized (lock) {
+                doSend = !stopped && myAttempt == attemptId;
+                if (doSend) {
+                    connectionOpen = true;
+                    scheduleStabilityConfirmation(myAttempt);
+                }
+            }
+            if (doSend) {
+                log.info("Voidburn plugin: connected, sending attach for {} (attempt {})", username, myAttempt);
+                // send() is non-blocking (enqueue only); the queue is drained
+                // by OkHttp's writer thread. If stop() runs now and closes the
+                // socket before OkHttp flushes, OkHttp drops the queued frame.
+                ws.send(AttachMessage.build(username, token));
+            } else {
+                log.debug("Voidburn plugin: onOpen for obsolete attempt {} (current {}); closing", myAttempt, attemptId);
+                ws.close(1000, "obsolete or stopped");
+            }
+        }
+
+        @Override
+        public void onMessage(WebSocket ws, String text) {
             // Phase 2c-2a logs only. Phase 2c-2b adds the decoder; 2c-3 the
-            // renderer.
+            // renderer. Obsolete-attempt filter so a lingering old socket's
+            // frames don't reach the handler.
+            synchronized (lock) {
+                if (stopped || myAttempt != attemptId) return;
+            }
             log.debug("Voidburn plugin: frame received: {}", text);
             try {
                 frameHandler.accept(text);
             } catch (Throwable t) {
-                // A handler crash must not take the socket down — log and move on.
                 log.warn("Voidburn plugin: frame handler threw", t);
             }
         }
 
         @Override
-        public void onClosing(WebSocket webSocket, int code, String reason) {
+        public void onClosing(WebSocket ws, int code, String reason) {
             // Honour server-initiated close with a clean echo; onClosed follows.
-            webSocket.close(1000, null);
+            ws.close(1000, null);
         }
 
         @Override
-        public void onClosed(WebSocket webSocket, int code, String reason) {
-            log.info("Voidburn plugin: connection closed (code={}, reason={})", code, reason);
-            cancelStabilityConfirmation();
-            PluginConnection.this.webSocket = null;
-            scheduleReconnect();
+        public void onClosed(WebSocket ws, int code, String reason) {
+            handleTermination("closed (code=" + code + ", reason=" + reason + ")");
         }
 
         @Override
-        public void onFailure(WebSocket webSocket, Throwable t, Response response) {
-            // Lower level than onClosed — connection refused, DNS failure, bad
-            // protocol. Log and reconnect through the same backoff.
-            log.info("Voidburn plugin: connection failed: {}", t.getMessage());
-            cancelStabilityConfirmation();
-            PluginConnection.this.webSocket = null;
-            scheduleReconnect();
+        public void onFailure(WebSocket ws, Throwable t, Response response) {
+            handleTermination("failed: " + t.getMessage());
+        }
+
+        private void handleTermination(String why) {
+            boolean iAmCurrent;
+            synchronized (lock) {
+                iAmCurrent = !stopped && myAttempt == attemptId;
+                if (iAmCurrent) {
+                    log.info("Voidburn plugin: connection {}", why);
+                    connectionOpen = false;
+                    cancelStabilityConfirmation();
+                    webSocket = null;
+                    scheduleReconnect();
+                } else {
+                    // Obsolete callback — stop() or a newer connect() took
+                    // over. Log at debug and don't touch state.
+                    log.debug("Voidburn plugin: termination for obsolete attempt {}: {}", myAttempt, why);
+                }
+            }
         }
     }
 }

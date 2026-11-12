@@ -14,14 +14,10 @@ import net.runelite.client.externalplugins.ExternalPluginManager;
  * Lives in src/test so it is excluded from the production plugin JAR —
  * players use the Plugin Hub distribution (future), not a bundled launcher.
  *
- * Run it from an IDE, or from Gradle via:
- * <pre>
- *   bash runelite-gateway/gradlew -p tools/voidburn-plugin test \
- *     --tests com.voidburn.plugin.VoidburnPluginLauncher
- * </pre>
- * (The launcher is a main method, not a JUnit test, so prefer launching from
- * an IDE "Run" action; a direct `java` invocation with the test classpath
- * also works.)
+ * Run it from an IDE: pick "Run" on the main method. This is not a JUnit
+ * test, so Gradle's `--tests` filter doesn't apply; launching via `java`
+ * against the module's test classpath works too but is awkward to spell out
+ * portably. Add a JavaExec task if you need a one-liner.
  *
  * Arguments are forwarded unchanged to {@link RuneLite#main}; use
  * {@code --developer-mode} to enable developer tooling.
