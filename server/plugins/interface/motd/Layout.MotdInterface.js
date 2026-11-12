@@ -226,9 +226,22 @@ function buildInterface({ tiers = [] } = {}) {
   const PLAY_W = 144;
   const PLAY_H = 28;
   const URL_W = PANEL.width - 32 - PLAY_W - 8;
-  add(C.FOOTER_DISCORD_LABEL,  panel, text(16, 398, URL_W, 14, { textColor: COLOR.TEAL }));
-  add(C.FOOTER_GITHUB_LABEL,   panel, text(16, 414, URL_W, 14, { textColor: COLOR.TEAL }));
-  add(C.FOOTER_LAUNCHER_LABEL, panel, text(16, 430, URL_W, 14, { textColor: COLOR.TEAL }));
+  // Footer URL labels are clickable: actions + FLAG_OP1 flag means a click fires a
+  // widget-action event that CustomInterfaceRuntime.handleWidgetClick intercepts.
+  // The runtime looks up the clicked component in the declaration's `urls` map and
+  // opens that URL via openClientUrl, consuming the click (no server round-trip).
+  add(C.FOOTER_DISCORD_LABEL,  panel, text(16, 398, URL_W, 14, {
+    textColor: COLOR.TEAL, mouseOverColor: COLOR.GOLD,
+    actions: ["Open"], flags: FLAG_OP1,
+  }));
+  add(C.FOOTER_GITHUB_LABEL,   panel, text(16, 414, URL_W, 14, {
+    textColor: COLOR.TEAL, mouseOverColor: COLOR.GOLD,
+    actions: ["Open"], flags: FLAG_OP1,
+  }));
+  add(C.FOOTER_LAUNCHER_LABEL, panel, text(16, 430, URL_W, 14, {
+    textColor: COLOR.TEAL, mouseOverColor: COLOR.GOLD,
+    actions: ["Open"], flags: FLAG_OP1,
+  }));
 
   // "Enter Voidburn" — centered vertically against the three URL stack.
   const PLAY_Y = 406;

@@ -1,3 +1,4 @@
+import { openClientUrl } from "../../common/openUrl";
 import { getCustomInterface } from "../../common/gamemode/GamemodeContentStore";
 import { IndexType } from "../../rs/cache/IndexType";
 import { markWidgetInteractionDirty } from "../WidgetInteraction";
@@ -121,6 +122,14 @@ export type CustomInterfaceDeclaration = {
         layoutComponent: number;
         clearQuery?: boolean;
     };
+    /**
+     * Components that open an external URL when clicked. Keys are component ids (not
+     * uids); values are absolute http/https URLs. A click on one of these runs
+     * openClientUrl locally and is consumed — no WIDGET_ACTION_BUTTON goes to the
+     * server. Non-http(s) urls are silently refused by openClientUrl, so no popup
+     * can be opened to javascript:/data:/file:/...
+     */
+    urls?: Record<number, string>;
 };
 
 export type CustomInterfaceRow = {
@@ -473,8 +482,28 @@ export class CustomInterfaceRuntime {
         }
     }
 
+    /**
+     * Try to open a declared URL for the clicked component. Returns true when the click
+     * is consumed (URL opened), false otherwise. Called from both input paths — the
+     * right-click menu dispatcher (via handleWidgetClick below) and the primary-click
+     * dispatcher in widgetClickInput.ts, which must consult this BEFORE sending a widget
+     * action to the server so the click stays local instead of round-tripping.
+     *
+     * openClientUrl itself rejects anything that isn't http/https, so a URL
+     * configured with javascript:/data:/file: is dropped at the renderer boundary.
+     */
+    tryOpenDeclaredUrl(groupId: number, childId: number): boolean {
+        if (groupId !== this.declaration?.groupId) return false;
+        const url = this.declaration.urls?.[childId];
+        if (typeof url !== "string") return false;
+        return openClientUrl(url);
+    }
+
     handleWidgetClick(groupId: number, childId: number): boolean {
         if (groupId === this.declaration?.groupId) {
+            // Declared URL actions run client-side and consume the click: no packet
+            // round-trip. Shared with the primary-click path via tryOpenDeclaredUrl.
+            if (this.tryOpenDeclaredUrl(groupId, childId)) return true;
             for (const region of this.declaration.scroll ?? []) {
                 if (!region.resetOnComponents?.includes(childId)) continue;
                 const view = this.widget(region.viewComponent);

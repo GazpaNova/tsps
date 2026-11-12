@@ -71,10 +71,22 @@ function sanitizeTiers(raw) {
 // Built once at module load from the shipped defaults. Tier structure is not
 // overridable via Motd:* keys (see docstring); the widget tree's sprite ids are
 // baked in and the file is the source of truth.
+//
+// The `urls` map wires the three footer label components to their click destinations.
+// The runtime (CustomInterfaceRuntime.handleWidgetClick) opens these via openClientUrl
+// on click. URLs come from the shipped defaults at build time — Motd:*Url overrides in
+// world.local.json still control the TEXT displayed via sendString, but the click
+// destination is baked into the declaration. If you need to change where the buttons
+// POINT, edit motd-defaults.json + restart.
 const INTERFACE_DEFINITION = (() => {
   const tiers = sanitizeTiers(DEFAULTS.ratesTiers);
   const { widgets } = buildInterface({ tiers });
-  return { groupId: GROUP_ID, widgets };
+  const urls = {
+    [COMPONENT.FOOTER_DISCORD_LABEL]: DEFAULTS.discordUrl,
+    [COMPONENT.FOOTER_GITHUB_LABEL]: DEFAULTS.githubUrl,
+    [COMPONENT.FOOTER_LAUNCHER_LABEL]: DEFAULTS.launcherUrl,
+  };
+  return { groupId: GROUP_ID, widgets, urls };
 })();
 
 function readString(key, fallback) {

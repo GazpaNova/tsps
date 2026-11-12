@@ -585,6 +585,18 @@ export function processWidgetClickInput(
                             const customRowId = deps.getCustomInterfaces().rowIdAt(groupId, childId);
                             if (customRowId === null) break;
                             if (customRowId !== undefined) payload.slot = customRowId;
+                            // A declared URL action for this component opens the URL
+                            // locally and consumes the click — no server round-trip, no
+                            // follow-up handleWidgetOp call. Must run BEFORE sendWidgetAction
+                            // or the server sees a click it shouldn't act on. The menu
+                            // (right-click Open) path dispatches through
+                            // WidgetActionRouter.handleWidgetAction which calls the same
+                            // URL check via handleWidgetClick; primary click (this path)
+                            // did not before v3, so left-click on a declared URL button
+                            // round-tripped silently to the server with no visible effect.
+                            if (deps.getCustomInterfaces().tryOpenDeclaredUrl(groupId, childId)) {
+                                break;
+                            }
                             sendWidgetAction(payload);
                             if (customRowId !== undefined) {
                                 deps.getCustomInterfaces().handleRowOp(customRowId, opId);

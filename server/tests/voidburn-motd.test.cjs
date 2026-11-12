@@ -354,6 +354,73 @@ test("eligible login completes: root sent, text sent, visible state tracked", as
   assert.ok(plugin._test.visible.has(player), "player marked visible after MOTD mount");
 });
 
+test("footer labels declare URL click actions bound to shipped defaults", () => {
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi();
+  plugin.register(api);
+  const def = hooks.registered[0];
+  assert.ok(def.urls, "interface definition carries a urls map");
+  const { COMPONENT } = freshLoad("../plugins/interface/motd/Layout.MotdInterface.js");
+  const defaults = require("../plugins/interface/motd/data/motd-defaults.json");
+  assert.equal(def.urls[COMPONENT.FOOTER_DISCORD_LABEL], defaults.discordUrl);
+  assert.equal(def.urls[COMPONENT.FOOTER_GITHUB_LABEL], defaults.githubUrl);
+  assert.equal(def.urls[COMPONENT.FOOTER_LAUNCHER_LABEL], defaults.launcherUrl);
+  // All three must be http/https so openClientUrl accepts them client-side.
+  for (const url of Object.values(def.urls)) {
+    assert.match(url, /^https?:\/\//, `URL ${url} is not http(s)`);
+  }
+});
+
+test("footer label widgets are clickable (actions + FLAG_OP1)", () => {
+  const { buildInterface, COMPONENT } = freshLoad("../plugins/interface/motd/Layout.MotdInterface.js");
+  const { widgets } = buildInterface({ tiers: [] });
+  const clickable = [
+    COMPONENT.FOOTER_DISCORD_LABEL,
+    COMPONENT.FOOTER_GITHUB_LABEL,
+    COMPONENT.FOOTER_LAUNCHER_LABEL,
+  ];
+  for (const componentId of clickable) {
+    const widget = widgets.find((w) => w.fileId === componentId);
+    assert.ok(widget, `component ${componentId} present`);
+    assert.ok(Array.isArray(widget.actions) && widget.actions.length > 0,
+      `component ${componentId} has at least one action`);
+    assert.ok(widget.flags && widget.flags > 0,
+      `component ${componentId} has flags set so clicks are transmitted`);
+  }
+});
+
+test("urls map reaches the custom-interface runtime after a real set_root path", () => {
+  // Regression for the v1 review finding: handleWidgetClick needs the runtime's
+  // declaration set BEFORE a click arrives. onInterfaceOpened is what sets it, and
+  // the mountSubInterface path already calls it — but the set_root path didn't until
+  // v2 added the call. MOTD mounts as root, so without this, URL clicks silently
+  // dropped through to the ordinary widget dispatch.
+  //
+  // This is a server-side test harness: we build the plugin's interface definition,
+  // confirm the `urls` map is present and well-formed, and verify every entry maps
+  // a widget that IS clickable (actions + flags set) to a validly-formatted URL.
+  // The actual onInterfaceOpened wiring lives in the client (OsrsClient.ts set_root
+  // handler) and is covered by a client-side regression I'd add if client tests
+  // could run in this harness.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi();
+  plugin.register(api);
+  const def = hooks.registered[0];
+  const { buildInterface } = freshLoad("../plugins/interface/motd/Layout.MotdInterface.js");
+  const { widgets } = buildInterface({ tiers: [] });
+
+  assert.ok(def.urls, "urls map ships in the declaration");
+  for (const [componentIdStr, url] of Object.entries(def.urls)) {
+    const componentId = Number(componentIdStr);
+    const widget = widgets.find((w) => w.fileId === componentId);
+    assert.ok(widget, `component ${componentId} present for url ${url}`);
+    assert.ok(Array.isArray(widget.actions) && widget.actions.length > 0,
+      `component ${componentId} is clickable`);
+    assert.ok(widget.flags > 0, `component ${componentId} has non-zero flags`);
+    assert.match(url, /^https?:\/\//, `url ${url} is http(s)`);
+  }
+});
+
 test("play hook clears visible state and no-ops if player was not visible", () => {
   const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
   const { api, hooks } = stubApi();

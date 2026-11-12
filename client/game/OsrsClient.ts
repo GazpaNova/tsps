@@ -2949,6 +2949,9 @@ export class OsrsClient {
                     this.triggerInitialVarTransmitForGroup(payload.groupId);
                     // Mark widgets loaded for transmit processing optimization
                     markWidgetsLoaded();
+                    if ((payload.groupId | 0) >= 30_000) {
+                        this.customInterfaces.onInterfaceOpened(payload.groupId | 0);
+                    }
 
                     // notification_display (660) is mounted into the toplevel
                     // "notifications" component (toplevel_*:notifications), and its visibility
