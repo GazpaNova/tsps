@@ -124,6 +124,14 @@ class VoidburnPluginRegistry {
             val attachment = attachments[registration.username]
             if (attachment != null && attachment.registration === registration) {
                 attachments.remove(registration.username, attachment)
+                // Symmetric with register-replacement: notify the session that its
+                // channel is gone, so voidburnPluginChannel drops to null as part of
+                // the same lifecycle step that unregistered. Owner-scoped: the
+                // callback is captured in THIS registration, which belongs to the
+                // closing session — a replacement session would have a different
+                // registration whose callback writes into a different session's
+                // field, so this invocation cannot reach into a replacement.
+                registration.attach(null)
             }
         }
     }

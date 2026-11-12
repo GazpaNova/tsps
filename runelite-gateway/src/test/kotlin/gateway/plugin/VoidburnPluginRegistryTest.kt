@@ -139,6 +139,48 @@ class VoidburnPluginRegistryTest {
     }
 
     @Test
+    fun `unregister clears a held attachment's channel via the null callback`() {
+        // Regression (Phase 2c-1 review P3): unregister used to remove the attachment
+        // map entry silently while leaving the session's voidburnPluginChannel field
+        // populated. Now symmetric with register-replacement: the null callback runs
+        // inside the publish lock, so the session's field drops to null as part of
+        // the same lifecycle step.
+        val registry = VoidburnPluginRegistry()
+        val seen = mutableListOf<VoidburnPluginChannel?>()
+        val handle = registry.registerWithToken("Miguel", token = "T") { seen += it }
+        val channel = NoopChannel()
+        registry.attach("Miguel", "T", channel)
+        assertSame(channel, seen.last())
+        registry.unregister(handle)
+        assertNull(seen.last(), "unregister should notify the session with null")
+        assertEquals(0, registry.attachmentCount)
+    }
+
+    @Test
+    fun `stale unregister does not clear a replacement's channel`() {
+        // Companion to the P3 fix: the null notification must stay owner-scoped.
+        // If session A was replaced by session B and then A's close() fires its
+        // unregister, B's channel must stay bound.
+        val registry = VoidburnPluginRegistry()
+        var aChannel: VoidburnPluginChannel? = null
+        val handleA = registry.registerWithToken("Miguel", token = "T") { aChannel = it }
+        registry.attach("Miguel", "T", NoopChannel())
+        // B replaces A — A's callback is invoked with null (replacement clears the old slot).
+        var bChannel: VoidburnPluginChannel? = NoopChannel()
+        registry.registerWithToken("Miguel", token = "T2") { bChannel = it }
+        assertNull(aChannel)
+        // B attaches successfully.
+        val bChannelReal = NoopChannel()
+        registry.attach("Miguel", "T2", bChannelReal)
+        assertSame(bChannelReal, bChannel)
+        // Now A's close() fires its stale unregister.
+        registry.unregister(handleA)
+        // B is still attached; its field is untouched.
+        assertSame(bChannelReal, bChannel, "stale unregister must not clear B's channel")
+        assertEquals(1, registry.attachmentCount)
+    }
+
+    @Test
     fun `registrationCount reflects live registrations`() {
         val registry = VoidburnPluginRegistry()
         assertEquals(0, registry.registrationCount)
