@@ -1,0 +1,50 @@
+plugins {
+  id 'java'
+}
+
+repositories {
+  maven {
+    url = 'https://repo.runelite.net'
+    content { includeGroupByRegex('net\\.runelite.*') }
+  }
+  mavenCentral()
+}
+
+def runeLiteVersion = providers.gradleProperty('runeLiteVersion').get()
+
+// Dependency locking is disabled for now so a first local build on any
+// checkout can install the dependencies without a pre-generated lockfile.
+// Add `dependencyLocking { lockAllConfigurations() }` and generate the
+// lockfile with `./gradlew dependencies --write-locks` once the module's
+// dependency set is stable.
+
+dependencies {
+  // RuneLite client brings Guice (plugin DI), OkHttp (WebSocket), Gson (JSON) and
+  // SLF4J (logging) as transitive dependencies. We declare it as implementation so
+  // it's on the compile and runtime classpath here, but the player's RuneLite
+  // install provides its own copy at runtime.
+  compileOnly "net.runelite:client:${runeLiteVersion}"
+
+  compileOnly 'org.projectlombok:lombok:1.18.30'
+  annotationProcessor 'org.projectlombok:lombok:1.18.30'
+  compileOnly 'org.jetbrains:annotations:23.0.0'
+
+  // Tests need OkHttp and Gson directly; those come from RuneLite at runtime but
+  // are not on the testCompile classpath without a declaration. We pin matching
+  // versions and verify them in the lockfile.
+  testImplementation "net.runelite:client:${runeLiteVersion}"
+  testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0'
+  testImplementation 'org.mockito:mockito-core:5.17.0'
+}
+
+tasks.withType(JavaCompile).configureEach {
+  options.encoding = 'UTF-8'
+  options.release.set(21)
+}
+
+test {
+  useJUnitPlatform()
+  systemProperty 'java.awt.headless', 'true'
+  maxHeapSize = '2g'
+  testLogging { events 'failed'; showStandardStreams = true }
+}
