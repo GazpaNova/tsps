@@ -35,6 +35,14 @@ public class VoidburnPlugin extends Plugin {
     @Inject
     private VoidburnConfig config;
 
+    /**
+     * Live view of what custom interfaces are open on this session. Written from the
+     * OkHttp dispatcher via onFrame; readable from any thread (the InterfaceState's
+     * records are immutable and its backing map is a ConcurrentHashMap). Phase 2c-3's
+     * overlay will consult this from the RuneLite client thread.
+     */
+    private final InterfaceState interfaceState = new InterfaceState();
+
     private PluginConnection connection;
 
     @Provides
@@ -85,9 +93,21 @@ public class VoidburnPlugin extends Plugin {
     }
 
     private void onFrame(String frame) {
-        // Hook for Phase 2c-2b. Phase 2c-2a leaves the log emission inside
-        // PluginConnection; this handler exists so the next patch can slot in
-        // the decoder here without touching the connection class.
+        // Phase 2c-2b: decode the frame and apply to the interface state. The
+        // decoder never throws; malformed or unknown frames land as Frame.Unknown
+        // and apply() treats them as no-ops. Phase 2c-3's overlay reads from
+        // interfaceState on the client thread; this update is on OkHttp's thread.
+        Frame decoded = FrameDecoder.decode(frame);
+        if (decoded instanceof Frame.Unknown unknown) {
+            log.debug("Voidburn plugin: unknown frame type {}: {}", unknown.type(), unknown.rawJson());
+            return;
+        }
+        interfaceState.apply(decoded);
+    }
+
+    /** Package-private accessor for tests and the future overlay. */
+    InterfaceState interfaceState() {
+        return interfaceState;
     }
 
     private static String safe(String s) {
