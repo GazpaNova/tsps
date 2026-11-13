@@ -84,8 +84,35 @@ class Interfaces(
                 tree.unmounted(target)
                 send(IfCloseSub(target ushr 16, target and 0xFFFF))
             }
-            TspsServerPacket.WIDGET_SET_TEXT -> component(reader) { i, c -> IfSetText(i, c, reader.string()) }
-            TspsServerPacket.WIDGET_SET_HIDDEN -> component(reader) { i, c -> IfSetHide(i, c, reader.u8() != 0) }
+            TspsServerPacket.WIDGET_SET_TEXT -> {
+                // Read the whole payload up front so a custom-group forward and a
+                // stock-group send share one decode. The uid encodes group in the
+                // high 16 bits and component in the low 16 bits.
+                val uid = tree.remap(reader.i32())
+                val text = reader.string()
+                if ((uid ushr 16) >= CUSTOM_INTERFACE_START) {
+                    if (!forwardCustomInterface("widget_set_text", mapOf("widgetId" to uid, "text" to text))) {
+                        DropCounter.down(packet.opcode)
+                    }
+                } else if (exists(uid)) {
+                    send(IfSetText(uid ushr 16, uid and 0xFFFF, text))
+                } else {
+                    dropped(uid)
+                }
+            }
+            TspsServerPacket.WIDGET_SET_HIDDEN -> {
+                val uid = tree.remap(reader.i32())
+                val hidden = reader.u8() != 0
+                if ((uid ushr 16) >= CUSTOM_INTERFACE_START) {
+                    if (!forwardCustomInterface("widget_set_hidden", mapOf("widgetId" to uid, "hidden" to hidden))) {
+                        DropCounter.down(packet.opcode)
+                    }
+                } else if (exists(uid)) {
+                    send(IfSetHide(uid ushr 16, uid and 0xFFFF, hidden))
+                } else {
+                    dropped(uid)
+                }
+            }
             TspsServerPacket.WIDGET_SET_ITEM ->
                 component(reader) { i, c ->
                     val obj = reader.u16().let { if (it == 0xFFFF) -1 else it }
