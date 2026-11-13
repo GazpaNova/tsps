@@ -47,6 +47,7 @@ class VoidburnPluginRegistry {
         internal val username: String,
         internal val attach: (VoidburnPluginChannel?) -> Unit,
         internal val authorize: (token: String) -> Boolean,
+        internal val onClick: (Attachment, VoidburnPluginMessages.Click) -> Unit,
     )
 
     /**
@@ -86,12 +87,13 @@ class VoidburnPluginRegistry {
      * that registration's attach callback is invoked with null, so the old session's
      * channel reference drops to null before the new session owns the slot.
      */
-    fun register(
+    internal fun register(
         username: String,
         attach: (VoidburnPluginChannel?) -> Unit,
         authorize: (token: String) -> Boolean,
+        onClick: (Attachment, VoidburnPluginMessages.Click) -> Unit = { _, _ -> },
     ): Registration {
-        val newReg = Registration(username, attach, authorize)
+        val newReg = Registration(username, attach, authorize, onClick)
         synchronized(publishLock) {
             val previousReg = sessions.put(username, newReg)
             if (previousReg != null) {
@@ -190,6 +192,67 @@ class VoidburnPluginRegistry {
                 attachment.registration.attach(null)
             }
         }
+    }
+
+    /**
+     * Dispatch an inbound click frame for an attached plugin. Owner-scoped
+     * against the current attachment slot: if the registration has been
+     * unregistered or the attachment replaced since this handler captured its
+     * handle, the dispatch is a no-op and the stale click goes nowhere.
+     * Returns true when the registration's onClick ran; false when the
+     * attachment was retired.
+     *
+     * Runs under the publish lock so the slot cannot flip between the owner
+     * check and the callback invocation (same discipline as attach/detach).
+     */
+    internal fun dispatchClick(attachment: Attachment, click: VoidburnPluginMessages.Click): Boolean {
+        synchronized(publishLock) {
+            if (!isCurrentLocked(attachment)) return false
+            attachment.registration.onClick(attachment, click)
+            return true
+        }
+    }
+
+    /**
+     * True iff this attachment is still the live slot AND its registration is
+     * still the live session for that username. No callbacks are invoked
+     * here.
+     *
+     * Semantics and the dispatch-time race window: the registry lock is
+     * released before this returns. A caller that acts on a true result
+     * (typically on the session executor, preparing to issue one upstream
+     * packet) accepts a micro-window in which a concurrent retirement
+     * could land between the return and the caller's own next step. This
+     * window is deliberate for Phase 2d-1's upstream I/O path: the
+     * publish lock is never held across a blocking upstream send
+     * (`TspsSocket.send` calls `WebSocket.sendBinary(...).join()`, which
+     * waits for the socket), because doing so would let one slow tsps
+     * upstream freeze every other player's register, attach, detach,
+     * and dispatch at this gateway.
+     *
+     * Contract: a click approved at the final execution-time ownership
+     * check may complete after attachment retirement, including
+     * performing its still-valid action upstream. No upper latency
+     * bound is guaranteed — thread scheduling and socket contention can
+     * delay the send. Retirement prevents subsequent ingress
+     * (`dispatchClick` refuses, `isCurrent` returns false) and queued
+     * tasks that have not yet passed this check. The packet is still
+     * bound for the same username's tsps session (registration is
+     * per-username; retirement does not switch the upstream socket),
+     * and tsps itself validates button clicks against the current
+     * interface state — this prevents invalid actions but does not
+     * prove harmlessness, nor does it undo an already-approved action.
+     */
+    internal fun isCurrent(attachment: Attachment): Boolean {
+        synchronized(publishLock) { return isCurrentLocked(attachment) }
+    }
+
+    /** Must be called while holding [publishLock]. */
+    private fun isCurrentLocked(attachment: Attachment): Boolean {
+        val current = attachments[attachment.registration.username]
+        if (current !== attachment) return false
+        val currentReg = sessions[attachment.registration.username]
+        return currentReg === attachment.registration
     }
 
     /** Current number of registered sessions. Tests only. */

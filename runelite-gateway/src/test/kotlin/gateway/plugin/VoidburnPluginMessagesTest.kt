@@ -230,4 +230,186 @@ class VoidburnPluginMessagesTest {
         val shallow = """{"type":"attach","username":"Miguel","token":"$T","extra":[[[[1]]]]}"""
         assertEquals(attach(), VoidburnPluginMessages.parseAttach(shallow))
     }
+
+    // --- Phase 2d-1 click parsing ---
+
+    @Test
+    fun `canonical click carries widgetId sub obj and op`() {
+        val uid = (30020 shl 16) or 186
+        assertEquals(
+            VoidburnPluginMessages.Click(uid, 0xFFFF, 0xFFFF, 1),
+            VoidburnPluginMessages.parseClick(
+                """{"type":"click","widgetId":$uid,"sub":65535,"obj":65535,"op":1}"""
+            ),
+        )
+    }
+
+    @Test
+    fun `click sub and obj default to NONE when omitted`() {
+        val uid = (30020 shl 16) or 186
+        assertEquals(
+            VoidburnPluginMessages.Click(uid, 0xFFFF, 0xFFFF, 1),
+            VoidburnPluginMessages.parseClick(
+                """{"type":"click","widgetId":$uid,"op":1}"""
+            ),
+        )
+    }
+
+    @Test
+    fun `click wrong type discriminator rejects`() {
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"attach","widgetId":1966266,"op":1}"""
+        ))
+    }
+
+    @Test
+    fun `click missing required fields rejects`() {
+        // No widgetId
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","op":1}"""))
+        // No op
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","widgetId":1966266}"""))
+    }
+
+    @Test
+    fun `click non-integer values reject`() {
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","widgetId":"1966266","op":1}"""))
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","widgetId":1966266,"op":"1"}"""))
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","widgetId":true,"op":1}"""))
+    }
+
+    @Test
+    fun `click fractional widget id rejects`() {
+        assertNull(VoidburnPluginMessages.parseClick("""{"type":"click","widgetId":1.5,"op":1}"""))
+    }
+
+    @Test
+    fun `click widget id overflowing int rejects`() {
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":99999999999,"op":1}"""
+        ))
+    }
+
+    @Test
+    fun `click sub and obj out of u16 range reject`() {
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"sub":70000,"op":1}"""
+        ))
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"sub":-1,"op":1}"""
+        ))
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"obj":70000,"op":1}"""
+        ))
+    }
+
+    @Test
+    fun `click op out of range rejects`() {
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"op":0}"""
+        ))
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"op":11}"""
+        ))
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"op":-1}"""
+        ))
+    }
+
+    @Test
+    fun `click duplicate key rejects`() {
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"click","widgetId":1966266,"widgetId":1,"op":1}"""
+        ))
+    }
+
+    @Test
+    fun `parseClick refuses an attach shape`() {
+        // Sanity: parseAttach and parseClick don't cross-accept.
+        assertNull(VoidburnPluginMessages.parseClick(
+            """{"type":"attach","username":"Miguel","token":"$T"}"""
+        ))
+    }
+
+    @Test
+    fun `parseAttach refuses a click shape`() {
+        assertNull(VoidburnPluginMessages.parseAttach(
+            """{"type":"click","widgetId":1,"op":1}"""
+        ))
+    }
+
+    @Test
+    fun `click accepts large positive widget id`() {
+        // Full 32-bit signed int: a packed uid with group near 32767 has a huge
+        // positive widgetId. Group 32767, component 1 = (32767 << 16) | 1 = 2147418113.
+        val uid = (32767 shl 16) or 1
+        assertEquals(
+            VoidburnPluginMessages.Click(uid, 0xFFFF, 0xFFFF, 1),
+            VoidburnPluginMessages.parseClick(
+                """{"type":"click","widgetId":$uid,"op":1}"""
+            ),
+        )
+    }
+
+    @Test
+    fun `click optional sub present but wrong type rejects`() {
+        // Regression (v1 P2-a): null / bool / string / object / array in an
+        // optional field must NOT default silently to NONE — they're present-
+        // but-wrong-typed, distinct from "sub omitted."
+        val uid = 1966266
+        for (bad in listOf("null", "true", "false", "\"65535\"", "[1,2]", "{}")) {
+            assertNull(
+                VoidburnPluginMessages.parseClick(
+                    """{"type":"click","widgetId":$uid,"op":1,"sub":$bad}"""
+                ),
+                "sub:$bad should reject (not default to NONE)",
+            )
+            assertNull(
+                VoidburnPluginMessages.parseClick(
+                    """{"type":"click","widgetId":$uid,"op":1,"obj":$bad}"""
+                ),
+                "obj:$bad should reject",
+            )
+        }
+    }
+
+    @Test
+    fun `attach tolerates unknown non-integer numeric fields`() {
+        // Regression (v1 P2-b): an unknown top-level field with a JSON number
+        // that can't parse as Long (fractional, scientific, out-of-range) used
+        // to reject the whole message because the parser forced Long-parse on
+        // every number. Now numbers are stored as captured text and parsed to
+        // int only at the consumer. parseAttach doesn't care about these.
+        assertEquals(
+            attach(),
+            VoidburnPluginMessages.parseAttach(
+                """{"type":"attach","username":"Miguel","token":"$T","future":1.5}"""
+            ),
+        )
+        assertEquals(
+            attach(),
+            VoidburnPluginMessages.parseAttach(
+                """{"type":"attach","username":"Miguel","token":"$T","future":1e2}"""
+            ),
+        )
+        assertEquals(
+            attach(),
+            VoidburnPluginMessages.parseAttach(
+                """{"type":"attach","username":"Miguel","token":"$T","future":9223372036854775808}"""
+            ),
+        )
+    }
+
+    @Test
+    fun `click accepts negative widget id for high-bit-set group`() {
+        // Group 32768..65535 has the sign bit set, so the packed uid is
+        // negative when read as a signed int. The parser must accept this.
+        // Group 40000, component 1 = (40000 << 16) | 1 = -1638399999 (signed).
+        val uid = (40000 shl 16) or 1
+        assertEquals(
+            VoidburnPluginMessages.Click(uid, 0xFFFF, 0xFFFF, 1),
+            VoidburnPluginMessages.parseClick(
+                """{"type":"click","widgetId":$uid,"op":1}"""
+            ),
+        )
+    }
 }

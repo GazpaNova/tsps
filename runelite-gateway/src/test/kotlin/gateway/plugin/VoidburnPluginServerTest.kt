@@ -187,6 +187,116 @@ class VoidburnPluginServerTest {
         }
     }
 
+    @Test
+    fun `attach then click dispatches the click to the session's onClick callback`() {
+        // Phase 2d-1 integration: a WebSocket client that attaches successfully
+        // can then send a click frame, and the gateway routes it to the session's
+        // onClick lambda (not the attach lambda).
+        val registry = VoidburnPluginRegistry()
+        val events = LinkedBlockingQueue<Event>()
+        val clicks = LinkedBlockingQueue<VoidburnPluginMessages.Click>()
+        registry.register(
+            "Miguel",
+            attach = { channel ->
+                if (channel == null) events.offer(Event.Detach) else events.offer(Event.Attach(channel))
+            },
+            authorize = { it == "secret-T" },
+            onClick = { _, c -> clicks.offer(c) },
+        )
+        val port = freePort()
+        val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
+        server.start()
+        val group = NioEventLoopGroup()
+        try {
+            val frames = LinkedBlockingQueue<String>()
+            val channel = connectWebSocketClient(group, port, frames)
+            channel.writeAndFlush(TextWebSocketFrame(
+                """{"type":"attach","username":"Miguel","token":"secret-T"}"""
+            )).sync()
+            val attached = events.poll(2, TimeUnit.SECONDS)
+            assertTrue(attached is Event.Attach, "attach event should fire first")
+            val uid = (30020 shl 16) or 186
+            channel.writeAndFlush(TextWebSocketFrame(
+                """{"type":"click","widgetId":$uid,"op":1}"""
+            )).sync()
+            val click = clicks.poll(2, TimeUnit.SECONDS)
+            assertEquals(VoidburnPluginMessages.Click(uid, 0xFFFF, 0xFFFF, 1), click)
+        } finally {
+            group.shutdownGracefully()
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `click before attach is dropped without closing the connection`() {
+        // A plugin that sends a click before attaching has done something wrong
+        // but shouldn't cause the connection to drop mid-handshake (the attach
+        // may still come in the next frame). The current code requires attach
+        // first; anything else before attach lands in the parseAttach path
+        // and closes. This test documents that expectation — it's a hostile
+        // ordering, closing is correct.
+        val registry = VoidburnPluginRegistry()
+        val clicks = LinkedBlockingQueue<VoidburnPluginMessages.Click>()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> clicks.offer(c) })
+        val port = freePort()
+        val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
+        server.start()
+        val group = NioEventLoopGroup()
+        try {
+            val frames = LinkedBlockingQueue<String>()
+            val channel = connectWebSocketClient(group, port, frames)
+            val uid = (30020 shl 16) or 186
+            channel.writeAndFlush(TextWebSocketFrame(
+                """{"type":"click","widgetId":$uid,"op":1}"""
+            )).sync()
+            // Connection closes because parseAttach rejects a click message.
+            val closed = channel.closeFuture().await(2, TimeUnit.SECONDS)
+            assertTrue(closed, "server closes on a pre-attach click")
+            // No click reached the session.
+            assertEquals(null, clicks.poll(200, TimeUnit.MILLISECONDS))
+        } finally {
+            group.shutdownGracefully()
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `unrecognised frame after attach is dropped without closing`() {
+        val registry = VoidburnPluginRegistry()
+        val clicks = LinkedBlockingQueue<VoidburnPluginMessages.Click>()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> clicks.offer(c) })
+        val port = freePort()
+        val server = VoidburnPluginServer(port = port, bindHost = "127.0.0.1", registry = registry)
+        server.start()
+        val group = NioEventLoopGroup()
+        try {
+            val frames = LinkedBlockingQueue<String>()
+            val channel = connectWebSocketClient(group, port, frames)
+            channel.writeAndFlush(TextWebSocketFrame(
+                """{"type":"attach","username":"Miguel","token":"T"}"""
+            )).sync()
+            // Give the server a moment to process the attach.
+            Thread.sleep(100)
+            // Send a bogus frame type — not a click, not an attach.
+            channel.writeAndFlush(TextWebSocketFrame(
+                """{"type":"unknown_future","foo":1}"""
+            )).sync()
+            // Connection stays open; no click arrived.
+            Thread.sleep(200)
+            assertTrue(channel.isActive, "unrecognised frame must not close the attached connection")
+            assertEquals(null, clicks.poll(200, TimeUnit.MILLISECONDS))
+        } finally {
+            group.shutdownGracefully()
+            server.stop()
+        }
+    }
+
     private fun connectWebSocketClient(
         group: NioEventLoopGroup,
         port: Int,

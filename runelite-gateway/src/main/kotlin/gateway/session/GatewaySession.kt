@@ -285,6 +285,7 @@ class GatewaySession(
             // Constant-time compare so a hostile client can't probe the token one byte
             // at a time by watching timing. The token is short, but the habit is right.
             authorize = { submitted -> tokensEqual(submitted, voidburnPluginToken) },
+            onClick = ::onPluginClick,
         )
         beforeHandshake.forEach(::onGamePacket)
         beforeHandshake.clear()
@@ -609,6 +610,85 @@ class GatewaySession(
      * with dashes so the player can read and type it back without ambiguity. Example:
      * `QzNk-WvZr-9sYm-dTaQ-xB7l-EpMz-hL3f-K8vN-RtGo-UjYi-aC4`
      */
+    /**
+     * Handle a click message the attached plugin sent. Runs on the plugin
+     * WebSocket's dispatcher thread; marshals onto this session's own
+     * executor before sending the tsps packet.
+     *
+     * Security gate: only clicks on custom groups (>= CUSTOM_INTERFACE_START)
+     * are accepted. Stock-group clicks would let an authenticated plugin
+     * mash the player's inventory, chat, or any other UI the official client
+     * owns — well outside this feature's scope. A click outside the custom
+     * range is logged at FINE and dropped.
+     *
+     * No attempt to validate that the clicked uid corresponds to an
+     * interface the server actually opened: tsps's own ifButtonX handler
+     * enforces that (it checks the component exists and has the matching op
+     * flag before applying it).
+     */
+    /**
+     * Invoked by VoidburnPluginRegistry.dispatchClick under its publish lock.
+     * Does NOT run on the session executor at entry — the `run { }` call
+     * below is this class's private member [run], which enqueues onto the
+     * executor. That queue is the point where a stale attachment can slip
+     * through: the registry's enqueue-time ownership check stays correct
+     * until the task is enqueued and the publish lock released, but the
+     * queued task may then sit behind other work while attachment A is
+     * replaced by B on the same still-IN_GAME session.
+     *
+     * The queued task therefore re-asks the registry whether this exact
+     * attachment is still the live slot, with [isCurrent], before sending
+     * upstream. The ownership check and the send are NOT atomic against
+     * retirement: the registry's publish lock is released before the
+     * send runs, because `tsps.send` blocks on the upstream WebSocket
+     * (`sendBinary(...).join()`), and holding the registry-wide lock
+     * across that wait would let one slow tsps upstream freeze every
+     * other player's register, attach, detach, and dispatch at this
+     * gateway.
+     *
+     * A click approved at the final execution-time ownership check may
+     * complete after attachment retirement, including performing its
+     * still-valid action upstream. No upper latency bound is
+     * guaranteed — thread scheduling and socket contention can delay
+     * execution. Retirement still prevents subsequent ingress
+     * (`dispatchClick` refuses) and queued tasks that have not yet
+     * passed this check. The packet is still bound for the same
+     * username's tsps session (registration is per-username; retirement
+     * does not switch the upstream socket), and tsps itself validates
+     * button clicks against the current interface state — this prevents
+     * invalid actions but does not undo an already-approved valid one.
+     *
+     * Session-thread ordering is preserved: the send runs on the session
+     * executor, serialized against all other session work on this
+     * session alone.
+     */
+    private fun onPluginClick(
+        attachment: gateway.plugin.VoidburnPluginRegistry.Attachment,
+        click: gateway.plugin.VoidburnPluginMessages.Click,
+    ) {
+        if ((click.widgetId ushr 16) < gateway.down.Interfaces.CUSTOM_INTERFACE_START) {
+            log.fine("Voidburn plugin: refusing click on stock widget ${click.widgetId}")
+            return
+        }
+        run {
+            if (state != State.IN_GAME) {
+                // Session not yet in game or already tearing down — drop the click.
+                return@run
+            }
+            if (!::tsps.isInitialized) return@run
+            if (!context.voidburnPluginRegistry.isCurrent(attachment)) {
+                log.fine("Voidburn plugin: dropping queued click; attachment retired before send")
+                return@run
+            }
+            // Deliberately outside the registry lock: tsps.send is a
+            // blocking upstream WebSocket write. See the comment above for
+            // the bounded race window this accepts.
+            tsps.send(gateway.tsps.TspsClientPacket.ifButtonX(
+                click.widgetId, click.sub, click.obj, click.op,
+            ))
+        }
+    }
+
     private fun mintVoidburnPluginToken(): String {
         val bytes = ByteArray(32)
         SecureRandom().nextBytes(bytes)

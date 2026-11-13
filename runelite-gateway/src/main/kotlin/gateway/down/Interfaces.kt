@@ -359,7 +359,7 @@ class Interfaces(
 
     private fun Int.signed16() = if (this == 0xFFFF) -1 else this
 
-    private companion object {
+    internal companion object {
         const val MODAL = 0
         const val INVENTORY = 149 shl 16
 

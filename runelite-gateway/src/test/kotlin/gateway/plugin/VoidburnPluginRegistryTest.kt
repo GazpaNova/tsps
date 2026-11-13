@@ -2,6 +2,7 @@ package gateway.plugin
 
 import gateway.session.VoidburnPluginChannel
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -288,5 +289,174 @@ class VoidburnPluginRegistryTest {
         t2.join(2000)
         assertSame(chanB, published.get())
         assertEquals(1, registry.attachmentCount)
+    }
+
+    // --- Phase 2d-1 owner-scoped click dispatch ---
+
+    @Test
+    fun `dispatchClick fires onClick when attachment is current`() {
+        val registry = VoidburnPluginRegistry()
+        val clicks = mutableListOf<VoidburnPluginMessages.Click>()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> clicks += c })
+        val handle = registry.attach("Miguel", "T", NoopChannel())!!
+        val click = VoidburnPluginMessages.Click(1966266, 0xFFFF, 0xFFFF, 1)
+        val fired = registry.dispatchClick(handle, click)
+        assertTrue(fired)
+        assertEquals(listOf(click), clicks)
+    }
+
+    @Test
+    fun `dispatchClick is no-op after unregister (P1-b regression)`() {
+        // Regression: v1 dispatched through attachment.registration.onClick
+        // directly, so a session that was unregistered after the plugin
+        // attached would still receive clicks through its retired lambda.
+        val registry = VoidburnPluginRegistry()
+        val clicks = mutableListOf<VoidburnPluginMessages.Click>()
+        val reg = registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> clicks += c })
+        val handle = registry.attach("Miguel", "T", NoopChannel())!!
+        registry.unregister(reg)
+        val click = VoidburnPluginMessages.Click(1966266, 0xFFFF, 0xFFFF, 1)
+        val fired = registry.dispatchClick(handle, click)
+        assertFalse(fired, "dispatchClick must refuse an attachment whose registration was unregistered")
+        assertTrue(clicks.isEmpty(), "retired registration's onClick must not run")
+    }
+
+    @Test
+    fun `dispatchClick is no-op after attachment replaced`() {
+        // Companion to P1-b: a replacement attachment (the same username, a
+        // second plugin instance with a valid token) retires the older
+        // handle. Dispatch on the older handle no-ops.
+        val registry = VoidburnPluginRegistry()
+        val clicks = mutableListOf<VoidburnPluginMessages.Click>()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> clicks += c })
+        val handleA = registry.attach("Miguel", "T", NoopChannel())!!
+        registry.attach("Miguel", "T", NoopChannel())!! // B replaces A
+        val click = VoidburnPluginMessages.Click(1966266, 0xFFFF, 0xFFFF, 1)
+        assertFalse(registry.dispatchClick(handleA, click),
+            "A's handle is stale after B replaced it")
+        assertTrue(clicks.isEmpty())
+    }
+
+    @Test
+    fun `dispatchClick fires against new registration after same-name replace`() {
+        // register-replacement (new session for same username) retires the old
+        // Registration. A plugin that had attached to the OLD registration
+        // and still holds its handle gets dropped; the NEW session's
+        // onClick fires only through its own attachment.
+        val registry = VoidburnPluginRegistry()
+        val oldClicks = mutableListOf<VoidburnPluginMessages.Click>()
+        val newClicks = mutableListOf<VoidburnPluginMessages.Click>()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, c -> oldClicks += c })
+        val staleHandle = registry.attach("Miguel", "T", NoopChannel())!!
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T2" },
+            onClick = { _, c -> newClicks += c })
+        val newHandle = registry.attach("Miguel", "T2", NoopChannel())!!
+        val click = VoidburnPluginMessages.Click(1966266, 0xFFFF, 0xFFFF, 1)
+        assertFalse(registry.dispatchClick(staleHandle, click),
+            "stale handle from the old registration must not fire the new onClick")
+        assertTrue(oldClicks.isEmpty())
+        assertTrue(newClicks.isEmpty())
+        assertTrue(registry.dispatchClick(newHandle, click))
+        assertEquals(listOf(click), newClicks)
+    }
+
+    // --- Phase 2d-1 v3 — execution-time isCurrent re-check ---
+
+    @Test
+    fun `isCurrent reflects live slot and retires on replace or unregister`() {
+        // Regression (v2 review P2): the session queues its ifButtonX send on
+        // the session executor after dispatchClick returns. Between enqueue
+        // and execute, A may be replaced by B on the same still-IN_GAME
+        // session. The queued task uses isCurrent at execute time to decide
+        // whether to send. The semantics isCurrent promises:
+        //   * true while the attachment is the live slot AND its registration
+        //     is the live session
+        //   * false after unregister
+        //   * false after same-name attachment replacement
+        //   * false after register-replacement for the same username
+        val registry = VoidburnPluginRegistry()
+        val reg = registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, _ -> })
+        val handleA = registry.attach("Miguel", "T", NoopChannel())!!
+        assertTrue(registry.isCurrent(handleA))
+
+        // Same-name attachment replacement retires A.
+        val handleB = registry.attach("Miguel", "T", NoopChannel())!!
+        assertFalse(registry.isCurrent(handleA),
+            "A must be retired once B replaces it")
+        assertTrue(registry.isCurrent(handleB))
+
+        // Unregister retires B too.
+        registry.unregister(reg)
+        assertFalse(registry.isCurrent(handleB),
+            "B must be retired after unregister")
+    }
+
+    @Test
+    fun `isCurrent is not held across its return`() {
+        // Dispatch-time contract documented on isCurrent: the publish lock
+        // is NOT held across the return value, so a caller that acts on a
+        // true result accepts a micro-window in which retirement could land
+        // between the check and the next step. This test pins that
+        // behaviour: a concurrent attach from thread B must not block on
+        // thread A's isCurrent call completing (unlike the retired v4
+        // runIfCurrent-under-lock contract). A blocking isCurrent would
+        // freeze the gateway whenever one caller's post-check work ran
+        // slowly.
+        val registry = VoidburnPluginRegistry()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, _ -> })
+        val handleA = registry.attach("Miguel", "T", NoopChannel())!!
+        // isCurrent returns immediately; we then do slow work entirely
+        // outside the registry. A concurrent attach from thread B must
+        // succeed promptly, not wait for that work.
+        assertTrue(registry.isCurrent(handleA))
+        val bAttached = java.util.concurrent.atomic.AtomicReference<VoidburnPluginRegistry.Attachment?>(null)
+        val tB = Thread { bAttached.set(registry.attach("Miguel", "T", NoopChannel())) }
+        tB.start()
+        tB.join(2000)
+        // B succeeded without any wait on A's post-check work.
+        assertNotNull(bAttached.get())
+        // And A is now retired, per the usual replacement semantics.
+        assertFalse(registry.isCurrent(handleA))
+    }
+
+    @Test
+    fun `isCurrent false after register-replacement with stale attachment`() {
+        // Companion: register-replacement for the same username retires the
+        // old Registration and its attachment. The old handle is no longer
+        // current even though a NEW registration/attachment exists for the
+        // same name.
+        val registry = VoidburnPluginRegistry()
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T" },
+            onClick = { _, _ -> })
+        val staleHandle = registry.attach("Miguel", "T", NoopChannel())!!
+        registry.register("Miguel",
+            attach = {},
+            authorize = { it == "T2" },
+            onClick = { _, _ -> })
+        registry.attach("Miguel", "T2", NoopChannel())!!
+        assertFalse(registry.isCurrent(staleHandle),
+            "stale handle from the old registration must report not-current")
     }
 }

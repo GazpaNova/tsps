@@ -167,11 +167,25 @@ private class PluginConnectionHandler(
             log.fine("plugin attached to session '${attach.username}'")
             return
         }
-        // Phase 2c and beyond: additional message types (click events, keepalive) go
-        // here. Phase 2b only expects the attach frame, so anything else is logged
-        // and ignored without tearing the connection down (keeps compatibility if the
-        // plugin starts sending status messages before the gateway grows handlers).
-        log.finer("ignoring plugin message type pre-Phase-2c: '${payload.take(80)}'")
+        // Phase 2d-1: click frames. The parser ignores anything that isn't a
+        // well-formed click; a hostile or malformed frame is logged at FINER
+        // and dropped without tearing the connection down (keeps the socket
+        // alive for subsequent real clicks).
+        val click = VoidburnPluginMessages.parseClick(payload)
+        if (click != null) {
+            val handle = attachment
+            if (handle != null) {
+                // Owner-scoped dispatch: the registry refuses to invoke the
+                // callback if this handler's attachment was retired (unregister
+                // or replacement) after the handler cached its handle.
+                val dispatched = registry.dispatchClick(handle, click)
+                if (!dispatched) {
+                    log.fine("plugin click ignored: attachment retired")
+                }
+            }
+            return
+        }
+        log.finer("ignoring unrecognised plugin frame: '${payload.take(80)}'")
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {

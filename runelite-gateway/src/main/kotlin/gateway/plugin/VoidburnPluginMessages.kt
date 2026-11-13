@@ -29,15 +29,73 @@ internal object VoidburnPluginMessages {
      */
     data class Attach(val username: String, val token: String)
 
+    /**
+     * Plugin → gateway widget click. {@code widgetId} is the full packed uid
+     * (group in the high 16 bits, component in the low 16 bits). {@code sub}
+     * and {@code obj} default to NONE (0xFFFF) when the plugin omits them —
+     * matches tsps's own sentinel for "no sub-component" / "no item". {@code op}
+     * is the 1-based option index the server configured for this widget.
+     */
+    data class Click(val widgetId: Int, val sub: Int, val obj: Int, val op: Int)
+
     fun parseAttach(json: String): Attach? {
         val obj = parseTopLevelObject(json) ?: return null
-        if (obj["type"] != "attach") return null
-        val username = obj["username"] ?: return null
+        if (asString(obj["type"]) != "attach") return null
+        val username = asString(obj["username"]) ?: return null
         if (username.isEmpty() || username.length > MAX_USERNAME_LENGTH) return null
-        val token = obj["token"] ?: return null
+        val token = asString(obj["token"]) ?: return null
         if (token.isEmpty() || token.length > MAX_TOKEN_LENGTH) return null
         return Attach(username, token)
     }
+
+    /**
+     * Shape: `{"type":"click","widgetId":<int>,"sub":<int>,"obj":<int>,"op":<int>}`.
+     * Required: type, widgetId, op. Optional: sub / obj (default 0xFFFF). Returns
+     * null on anything else, including out-of-range sub/obj/op, a non-number
+     * for a numeric field, or a present-but-wrong-typed optional field
+     * (e.g. `"sub":null` — a hostile shape distinct from "sub omitted").
+     *
+     * The gateway enforces authorization separately (widgetId must be in a custom
+     * group >= 30000, decided inside GatewaySession); the parser only enforces shape.
+     */
+    fun parseClick(json: String): Click? {
+        val obj = parseTopLevelObject(json) ?: return null
+        if (asString(obj["type"]) != "click") return null
+        val widgetId = asInt(obj["widgetId"]) ?: return null
+        val op = asInt(obj["op"]) ?: return null
+        // Optional-with-default: an absent key defaults to NONE; a present key
+        // with a wrong-typed value (null / bool / string / object / array)
+        // rejects. containsKey separates "absent" from "present but not a
+        // captured number."
+        val sub = if (obj.containsKey("sub")) asInt(obj["sub"]) ?: return null else NONE
+        val objId = if (obj.containsKey("obj")) asInt(obj["obj"]) ?: return null else NONE
+        if (sub !in 0..0xFFFF || objId !in 0..0xFFFF || op !in 1..MAX_OP) return null
+        return Click(widgetId, sub, objId, op)
+    }
+
+    private fun asString(value: Any?): String? = value as? String
+
+    /**
+     * Coerce a parser value into an Int. Accepts only a {@link NumberValue}
+     * whose captured JSON number parses as a Long within Int range. A JSON
+     * fractional ({@code 1.5}), scientific ({@code 1e2}), or over/underflow
+     * number is rejected here, not at the parser level — so an attach with an
+     * unknown {@code "future":1.5} top-level field still parses, while a
+     * click that genuinely wants an int in widgetId still rejects on a
+     * float.
+     */
+    private fun asInt(value: Any?): Int? {
+        val nv = value as? NumberValue ?: return null
+        val l = nv.text.toLongOrNull() ?: return null
+        if (l < Int.MIN_VALUE || l > Int.MAX_VALUE) return null
+        return l.toInt()
+    }
+
+    /** NONE sentinel for sub/obj ("no sub-component" / "no item"); matches gateway/up/Upstream.kt. */
+    private const val NONE = 0xFFFF
+
+    /** Upper bound on the 1-based option index a widget may expose. OSRS uses 1..10. */
+    private const val MAX_OP = 10
 
     private const val MAX_USERNAME_LENGTH = 32
 
@@ -65,11 +123,25 @@ internal object VoidburnPluginMessages {
      *
      * Keys of any depth below the top level are not visible to the caller.
      */
-    private fun parseTopLevelObject(json: String): Map<String, String>? {
+    /**
+     * Returns a map of top-level fields. Values are {@link String} for string
+     * literals, {@link NumberValue} (carrying the source text) for numbers, or
+     * null for bool/null/object/array — the key is still present in the map so
+     * callers can distinguish "field absent" (containsKey false) from "field
+     * present but not a captured type" (containsKey true, value null). Nested
+     * composites are walked for structural strictness; their content is
+     * discarded.
+     *
+     * Duplicate keys reject regardless of value type. A JSON number that
+     * doesn't parse as any legal shape rejects via the lower-level readNumber.
+     * Numeric parsing to int happens at the consumer (see asInt) so a
+     * parseAttach doesn't reject when an unknown extra field carries a float.
+     */
+    private fun parseTopLevelObject(json: String): Map<String, Any?>? {
         val p = Parser(json)
         p.skipWhitespace()
         if (!p.consume('{')) return null
-        val out = HashMap<String, String>()
+        val out = HashMap<String, Any?>()
         // Track EVERY key we've seen at this level, independent of whether we kept its
         // value. Without this, a non-string value for a duplicate key — `"type":null` —
         // would never land in `out`, and a later `"type":"attach"` would slip past the
@@ -89,7 +161,14 @@ internal object VoidburnPluginMessages {
             if (!p.consume(':')) return null
             p.skipWhitespace()
             val value = p.readValue() ?: return null
-            if (value is StringValue) out[key] = value.content
+            when (value) {
+                is StringValue -> out[key] = value.content
+                is NumberValue -> out[key] = value
+                // bool/null/object/array: mark present (null) but not captured, so
+                // containsKey still returns true and a consumer that requires a
+                // string/number value sees the mismatch.
+                else -> out[key] = null
+            }
             p.skipWhitespace()
             when (p.peek()) {
                 ',' -> {
@@ -106,8 +185,10 @@ internal object VoidburnPluginMessages {
         }
     }
 
-    /** Opaque holder so parseTopLevelObject can distinguish strings from other values. */
+    /** Opaque holders so parseTopLevelObject can distinguish typed values. */
     private class StringValue(val content: String)
+    /** Captured JSON number source text; consumers call toLongOrNull / toIntOrNull. */
+    private class NumberValue(val text: String)
 
     private class Parser(private val s: String) {
         private var i: Int = 0
@@ -195,10 +276,12 @@ internal object VoidburnPluginMessages {
         }
 
         /**
-         * Read any JSON value at the current position. Returns a StringValue for strings,
-         * Unit for any other legal value (number, bool, null, object, array), or null on
-         * parse error. Objects and arrays are walked structurally so the outer parser can
-         * continue past them without treating their inner keys as top-level.
+         * Read any JSON value at the current position. Returns a StringValue for
+         * strings, a NumberValue (with the source text, not a parsed Long — leave
+         * range checks to the caller) for numbers, Unit for bool/null/object/array,
+         * or null on parse error. Objects and arrays are walked structurally so
+         * the outer parser can continue past them without treating their inner
+         * keys as top-level.
          */
         fun readValue(): Any? {
             if (eof()) return null
@@ -209,9 +292,20 @@ internal object VoidburnPluginMessages {
                 't' -> if (match("true")) Unit else null
                 'f' -> if (match("false")) Unit else null
                 'n' -> if (match("null")) Unit else null
-                '-', in '0'..'9' -> if (skipNumber()) Unit else null
+                '-', in '0'..'9' -> readNumber()?.let { NumberValue(it) }
                 else -> null
             }
+        }
+
+        /**
+         * Validate a number at the current position and return its source text.
+         * Grammar is the same strict JSON number as {@link #skipNumber}; this
+         * version additionally captures the text for the caller to parse.
+         */
+        fun readNumber(): String? {
+            val start = i
+            if (!skipNumber()) return null
+            return s.substring(start, i)
         }
 
         private fun match(literal: String): Boolean {
