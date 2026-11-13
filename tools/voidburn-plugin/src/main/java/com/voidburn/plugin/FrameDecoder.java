@@ -2,7 +2,6 @@ package com.voidburn.plugin;
 
 import com.google.gson.stream.JsonReader;
 import com.google.gson.stream.JsonToken;
-import com.google.gson.stream.MalformedJsonException;
 import java.io.IOException;
 import java.io.StringReader;
 import java.math.BigDecimal;
@@ -35,6 +34,14 @@ final class FrameDecoder {
     private FrameDecoder() {}
 
     /**
+     * Maximum structural nesting depth the parser will walk. Attach payloads have no
+     * legitimate reason to nest beyond this; the limit bounds stack consumption when
+     * a hostile client sends thousands of nested arrays/objects. Picked to be well
+     * below the default JVM thread stack ceiling.
+     */
+    private static final int MAX_DEPTH = 32;
+
+    /**
      * Opaque holder around a parsed top-level string/number/bool/list value.
      * Non-string scalar types kept so field decoders can type-check without re-walking.
      */
@@ -64,6 +71,15 @@ final class FrameDecoder {
         if (json == null || json.isEmpty()) {
             return new Frame.Unknown("", json == null ? "" : "");
         }
+        // Pre-scan for unescaped control characters inside JSON strings. Gson 2.8.5's
+        // JsonReader with setLenient(false) still accepts these — JSON itself forbids
+        // every unescaped char < U+0020 inside quoted strings. We walk the source
+        // tracking in-string and escape state and reject on first offender. Valid
+        // escapes (e.g. "\\u0001", "\\n") pass because the backslash opens an escape
+        // before the control char.
+        if (hasUnescapedControlCharInString(json)) {
+            return new Frame.Unknown("", json);
+        }
         JsonReader reader = new JsonReader(new StringReader(json));
         reader.setLenient(false);
         java.util.Map<String, Value> fields;
@@ -71,13 +87,16 @@ final class FrameDecoder {
             if (reader.peek() != JsonToken.BEGIN_OBJECT) {
                 return new Frame.Unknown("", json);
             }
-            fields = readObject(reader);
+            fields = readObject(reader, 0);
             // Trailing content after the object is rejected. A strict JsonReader only
             // yields END_DOCUMENT when the input truly ended.
             if (reader.peek() != JsonToken.END_DOCUMENT) {
                 return new Frame.Unknown("", json);
             }
-        } catch (MalformedJsonException | IllegalStateException | IOException e) {
+        } catch (IOException | IllegalStateException e) {
+            // MalformedJsonException extends IOException; a single catch covers both
+            // Gson's syntax errors and the "state exceptions" JsonReader throws when
+            // a token's type mismatches our peek-driven reads.
             return new Frame.Unknown("", json);
         }
         if (fields == null) {
@@ -104,9 +123,15 @@ final class FrameDecoder {
      * Read a top-level JSON object from {@code reader}. Returns a map of its top-level
      * fields with duplicate-name detection; nested objects/arrays in non-array positions
      * are skipped structurally and recorded as {@link Value.Kind#SKIPPED}. Returns null
-     * if a duplicate key is encountered.
+     * if a duplicate key is encountered or if nesting exceeds {@link #MAX_DEPTH}.
+     *
+     * {@code depth} is the current nesting level (0 for the top-level object). All
+     * recursive reads propagate depth+1 so {@link StackOverflowError} cannot escape
+     * decode even on a hostile deeply-nested payload — see the P2-c regression in
+     * FrameDecoderTest.
      */
-    private static java.util.Map<String, Value> readObject(JsonReader reader) throws IOException {
+    private static java.util.Map<String, Value> readObject(JsonReader reader, int depth) throws IOException {
+        if (depth > MAX_DEPTH) return null;
         reader.beginObject();
         java.util.Map<String, Value> out = new java.util.HashMap<>();
         Set<String> seen = new HashSet<>();
@@ -116,7 +141,7 @@ final class FrameDecoder {
                 // Duplicate key — reject the whole frame. Drain the rest for cleanliness.
                 return null;
             }
-            Value v = readValue(reader);
+            Value v = readValue(reader, depth + 1);
             if (v == null) return null;
             out.put(name, v);
         }
@@ -126,10 +151,11 @@ final class FrameDecoder {
 
     /**
      * Read one JSON value at the current position. Returns a typed Value or Value.skipped
-     * for composite values that aren't a recognised array-of-int. Returns null on IO or
-     * nested-parse failure.
+     * for composite values that aren't a recognised array-of-int. Returns null on IO
+     * failure or when {@code depth} exceeds {@link #MAX_DEPTH}.
      */
-    private static Value readValue(JsonReader reader) throws IOException {
+    private static Value readValue(JsonReader reader, int depth) throws IOException {
+        if (depth > MAX_DEPTH) return null;
         JsonToken tok = reader.peek();
         switch (tok) {
             case STRING:
@@ -142,14 +168,14 @@ final class FrameDecoder {
                 reader.nextNull();
                 return Value.skipped();
             case BEGIN_ARRAY:
-                return readArray(reader);
+                return readArray(reader, depth);
             case BEGIN_OBJECT:
                 // Nested object: validate structurally (strictness still applies) but
                 // discard the content. We only surface array-of-int and scalar values.
                 reader.beginObject();
                 while (reader.hasNext()) {
                     reader.nextName();
-                    Value nested = readValue(reader);
+                    Value nested = readValue(reader, depth + 1);
                     if (nested == null) return null;
                 }
                 reader.endObject();
@@ -163,9 +189,11 @@ final class FrameDecoder {
      * Read a JSON array. If every element is an integer-valued number, returns an
      * {@link Value.Kind#ARRAY_OF_INT}. Any non-integer element causes the array to
      * be treated as a skipped composite — which for the fields we decode (hiddenUids)
-     * means the caller will see a type mismatch and return Unknown.
+     * means the caller will see a type mismatch and return Unknown. Returns null if
+     * {@code depth} exceeds {@link #MAX_DEPTH}.
      */
-    private static Value readArray(JsonReader reader) throws IOException {
+    private static Value readArray(JsonReader reader, int depth) throws IOException {
+        if (depth > MAX_DEPTH) return null;
         reader.beginArray();
         List<Integer> ints = new ArrayList<>();
         boolean allInt = true;
@@ -186,12 +214,42 @@ final class FrameDecoder {
             } else {
                 allInt = false;
                 // Still consume the element to keep the reader in a valid state.
-                Value v = readValue(reader);
+                Value v = readValue(reader, depth + 1);
                 if (v == null) return null;
             }
         }
         reader.endArray();
         return allInt ? Value.intArray(Collections.unmodifiableList(ints)) : Value.skipped();
+    }
+
+    /**
+     * Returns true if {@code json} contains a character below U+0020 inside a quoted
+     * string value or name, not preceded by a backslash. Valid escape sequences like
+     * {@code "\n"} or {@code "\u0001"} pass because the control character is delivered
+     * by the escape, not by a literal byte in the source.
+     */
+    private static boolean hasUnescapedControlCharInString(String json) {
+        boolean inString = false;
+        boolean escape = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                if (escape) {
+                    escape = false;
+                } else if (c == '\\') {
+                    escape = true;
+                } else if (c == '"') {
+                    inString = false;
+                } else if (c < 0x20) {
+                    return true;
+                }
+            } else if (c == '"') {
+                inString = true;
+            }
+            // Outside strings, control chars (whitespace included) are fine; JsonReader
+            // handles them. Only in-string unescaped controls are the JSON violation.
+        }
+        return false;
     }
 
     private static Frame decodeWidgetOpen(java.util.Map<String, Value> fields, String raw) {

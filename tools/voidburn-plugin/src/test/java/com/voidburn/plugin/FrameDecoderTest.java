@@ -249,4 +249,71 @@ class FrameDecoderTest {
         assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
             "{\"type\":\"widget_open\",\"group\":Infinity,\"modal\":true}"));
     }
+
+    // --- Phase 2c-2b v2 review regressions ---
+
+    @Test
+    void rawControlCharInStringValueIsRejected() {
+        // Regression (P2-b): Gson 2.8.5 JsonReader with lenient=false still accepts
+        // raw U+0001 (and other < U+0020) in quoted strings. JSON forbids unescaped
+        // control characters in strings — the pre-scan rejects them.
+        String tab = "{\"type\":\"widget_set_root\",\"group\":30000,\"extra\":\"a\tb\"}";
+        String u0001 = "{\"type\":\"widget_set_root\",\"group\":30000,\"extra\":\"a\u0001b\"}";
+        String nl = "{\"type\":\"widget_set_root\",\"group\":30000,\"extra\":\"a\nb\"}";
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(tab));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(u0001));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(nl));
+    }
+
+    @Test
+    void rawControlCharInKeyIsRejected() {
+        String bad = "{\"ty\u0001pe\":\"widget_set_root\",\"group\":30000}";
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(bad));
+    }
+
+    @Test
+    void escapedControlCharInStringIsAccepted() {
+        // Valid JSON escape sequences for the same control characters pass: the
+        // backslash opens an escape before the control byte would appear.
+        Frame f = FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",\"group\":30000,\"extra\":\"a\\u0001b\"}");
+        assertInstanceOf(Frame.WidgetSetRoot.class, f);
+    }
+
+    @Test
+    void controlCharOutsideStringsDoesNotTriggerRejection() {
+        // Literal whitespace/newline between structural tokens (not inside a string)
+        // is valid JSON.
+        String withWhitespace = "{\n  \"type\":\"widget_set_root\",\n  \"group\":30000\n}";
+        Frame f = FrameDecoder.decode(withWhitespace);
+        Frame.WidgetSetRoot r = assertInstanceOf(Frame.WidgetSetRoot.class, f);
+        assertEquals(30000, r.group());
+    }
+
+    @Test
+    void deeplyNestedCompositeDoesNotThrow() {
+        // Regression (P2-c): readValue/readArray recursed without bound; a 3,000-
+        // level nested array in a ~6 KB payload blew the Netty dispatcher's stack.
+        // The depth cap (MAX_DEPTH = 32) now rejects such payloads with Unknown.
+        int levels = 3000;
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"type\":\"widget_set_root\",\"group\":30000,\"extra\":");
+        for (int i = 0; i < levels; i++) sb.append('[');
+        sb.append('0');
+        for (int i = 0; i < levels; i++) sb.append(']');
+        sb.append('}');
+        // Must not throw — the whole point of the depth cap.
+        Frame f = FrameDecoder.decode(sb.toString());
+        assertInstanceOf(Frame.Unknown.class, f);
+    }
+
+    @Test
+    void shallowNestingIsStillAccepted() {
+        // Nesting under MAX_DEPTH passes. The hiddenUids array is 1 level deep.
+        // The "extra" object with a nested array of ints is 2 levels. Both OK.
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_open_sub","rawTarget":1,"target":2,"group":30000,
+             "interfaceType":0,"hiddenUids":[1,2,3],"extra":{"nested":[1,2]}}""");
+        assertInstanceOf(Frame.WidgetOpenSub.class, f);
+    }
 }

@@ -262,17 +262,21 @@ final class PluginConnection {
 
         @Override
         public void onMessage(WebSocket ws, String text) {
-            // Phase 2c-2a logs only. Phase 2c-2b adds the decoder; 2c-3 the
-            // renderer. Obsolete-attempt filter so a lingering old socket's
-            // frames don't reach the handler.
+            // The obsolete-attempt check AND the frameHandler invocation run under
+            // the same lock so a concurrent stop() cannot slip between them. The
+            // handler for Phase 2c-2b is a pure decode + a ConcurrentHashMap write
+            // (InterfaceState.apply) — non-blocking and non-reentrant into this
+            // connection, so holding `lock` across it is safe. A later overlay that
+            // marshals to the RuneLite client thread must still schedule, not
+            // execute, under this lock.
             synchronized (lock) {
                 if (stopped || myAttempt != attemptId) return;
-            }
-            log.debug("Voidburn plugin: frame received: {}", text);
-            try {
-                frameHandler.accept(text);
-            } catch (Throwable t) {
-                log.warn("Voidburn plugin: frame handler threw", t);
+                log.debug("Voidburn plugin: frame received: {}", text);
+                try {
+                    frameHandler.accept(text);
+                } catch (Throwable t) {
+                    log.warn("Voidburn plugin: frame handler threw", t);
+                }
             }
         }
 
