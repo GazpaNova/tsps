@@ -164,26 +164,37 @@ class InterfacesCustomComponentForwardTest {
         // v2 classifies on the RAW uid, so the mis-remap now falls through to the
         // exists/dropped path and the plugin never sees it.
         //
-        // We simulate the mis-remap by using a custom tree lookalike that only
-        // accepts the raw uid in the existence check — the real redirect-enum
-        // behavior is cache-specific and out of this test's scope; the point is
-        // that a raw uid in group 161 must stay on the stock path.
+        // Exercise the real cache-driven remap path: switch the tree to the Fixed
+        // root 548 where 161:94 has no redirect entry, so remap returns the -1
+        // sentinel. The v2 code must treat this as a stock packet regardless.
+        val tree = InterfaceTree(enums).also { it.setRoot(548) }
         val rawUid = (161 shl 16) or 94
-        val existingUids = ArrayList<Int>()
-        val stockOnlyInterfaces = Interfaces(
+        assertEquals(-1, tree.remap(rawUid),
+            "preconditions: 161:94 must remap to -1 on root 548")
+        val fixedRootSent = ArrayList<OutgoingGameMessage>()
+        val fixedRootForwarded = ArrayList<String>()
+        val fixedRootChannel = object : VoidburnPluginChannel {
+            override fun send(message: String) { fixedRootForwarded += message }
+        }
+        val interfacesOn548 = Interfaces(
             VarpMirror(VarTypes(cache)),
-            InterfaceTree(enums),
-            StockMarket { sent += it },
+            tree,
+            StockMarket { fixedRootSent += it },
             {},
-            { uid -> existingUids += uid; false }, // nothing exists → dropped path
-            { sent += it },
-            { channel },
+            { false }, // simulate "no stock component exists for -1" → drop path
+            { fixedRootSent += it },
+            { fixedRootChannel },
         )
-        stockOnlyInterfaces.handle(TspsPacket(
+        interfacesOn548.handle(TspsPacket(
             TspsServerPacket.WIDGET_SET_TEXT,
             TspsWriter().i32(rawUid).string("chat").body(),
         ))
-        assertTrue(forwarded.isEmpty(), "stock-161 uid must never reach the plugin channel")
+        interfacesOn548.handle(TspsPacket(
+            TspsServerPacket.WIDGET_SET_HIDDEN,
+            TspsWriter().i32(rawUid).u8(0).body(),
+        ))
+        assertTrue(fixedRootForwarded.isEmpty(),
+            "stock-161 uid that fails to remap must never reach the plugin channel")
     }
 
     @Test
