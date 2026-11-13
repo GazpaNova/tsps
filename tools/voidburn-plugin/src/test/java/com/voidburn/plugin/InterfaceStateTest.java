@@ -167,4 +167,52 @@ class InterfaceStateTest {
         state.apply(new Frame.WidgetOpen(30000, true));
         assertTrue(state.get(30007).isEmpty());
     }
+
+    // --- Phase 2c-2b review regressions ---
+
+    @Test
+    void resetClearsRootAndAllOpenInterfaces() {
+        // Regression (P2-2): a retired session must not leak its root and mounts
+        // into the next session's state.
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        state.apply(new Frame.WidgetSetRoot(30000));
+        state.apply(new Frame.WidgetOpenSub(1, (30000 << 16) | 10, 30001, 0, List.of(100)));
+        state.reset();
+        assertTrue(state.rootGroup().isEmpty());
+        assertFalse(state.isOpen(30000));
+        assertTrue(state.get(30000).isEmpty());
+    }
+
+    @Test
+    void resetIsIdempotent() {
+        InterfaceState state = new InterfaceState();
+        state.reset();
+        state.reset();
+        assertTrue(state.rootGroup().isEmpty());
+    }
+
+    @Test
+    void stateAcceptsNewFramesAfterReset() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        state.reset();
+        state.apply(new Frame.WidgetOpen(30020, false));
+        assertTrue(state.isOpen(30020));
+        assertFalse(state.isOpen(30000));
+    }
+
+    @Test
+    void widgetSetRootPublishesEntryBeforeRoot() {
+        // Regression (P2-3): populating open[] before publishing rootGroup is now
+        // explicit in apply(). This test can't deterministically reproduce the
+        // store-ordering race in-process (JMM doesn't give us a cheap way to
+        // inspect the interleaving), so it asserts the post-condition invariant
+        // instead: after apply() returns, both the entry and the root are visible
+        // together.
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetSetRoot(30020));
+        assertEquals(30020, state.rootGroup().orElseThrow());
+        assertTrue(state.get(30020).isPresent());
+    }
 }

@@ -87,8 +87,15 @@ public class VoidburnPlugin extends Plugin {
 
     private void closeConnection() {
         if (connection != null) {
+            // Stop the connection first so no further frames can reach interfaceState.
+            // PluginConnection.stop() tears down under its lifecycle monitor; any late
+            // OkHttp callback sees stopped=true and short-circuits before apply() is
+            // reached. Only then clear state, so a replacement session (new login,
+            // new config, or plugin re-enable) starts from an empty view and cannot
+            // inherit the retired session's root or mounts.
             connection.stop();
             connection = null;
+            interfaceState.reset();
         }
     }
 

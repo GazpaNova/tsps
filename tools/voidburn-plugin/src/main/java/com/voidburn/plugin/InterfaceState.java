@@ -20,11 +20,19 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Threading: OkHttp's dispatcher calls {@link #apply(Frame)} from its worker thread,
  * and future RuneLite overlay code will read the state from the client thread. Backing
- * storage is a ConcurrentHashMap and each {@link Interface} record is immutable, so a
- * reader snapshot reflects a consistent per-group state at the moment of read. Cross-
- * group invariants (e.g. "the root always exists in the open-set") hold at the end of
- * every apply() call but are not atomic across multiple maps — the writer runs serially
- * from one thread, so no reader observes a partial apply mid-flight.
+ * storage is a ConcurrentHashMap, {@code rootGroup} is volatile, and each
+ * {@link Interface} record is immutable, so a reader snapshot reflects a consistent
+ * per-group state at the moment of read.
+ *
+ * Cross-field atomicity is NOT guaranteed. Reading {@link #rootGroup()} and then
+ * {@link #get(int)} is two independent operations: a reader can observe the new root
+ * from one apply() and the still-unmounted interface-entry map from a concurrent
+ * write, because volatile + ConcurrentHashMap each only guarantee their own single
+ * field. Writes on this class are ordered so the interface entry is populated BEFORE
+ * {@link #rootGroup} is published — so a reader that sees the new root is guaranteed
+ * to find its entry on a subsequent {@link #get} call. The reverse order (reading
+ * entries then the root) can still see stale root values; callers that need both in
+ * one snapshot should take a lock or use the future snapshot API (Phase 2c-3).
  */
 public final class InterfaceState {
     /**
@@ -84,10 +92,12 @@ public final class InterfaceState {
                 ? new Interface(g, o.modal(), Collections.emptyMap())
                 : prev.withModal(o.modal()));
         } else if (frame instanceof Frame.WidgetSetRoot r) {
-            rootGroup = r.group();
-            // The server implicitly opens a root; ensure it has an Interface entry so
-            // callers can query it without a null check.
+            // Populate the Interface entry BEFORE publishing rootGroup. A client
+            // thread reader that observes the new rootGroup will then always find a
+            // matching entry on its next get() call. Previously these ran in the
+            // opposite order and a reader could race in between.
             open.computeIfAbsent(r.group(), g -> new Interface(g, true, Collections.emptyMap()));
+            rootGroup = r.group();
         } else if (frame instanceof Frame.WidgetOpenSub s) {
             SubMount mount = new SubMount(
                 s.rawTarget(), s.target(), s.group(), s.interfaceType(),
@@ -123,8 +133,22 @@ public final class InterfaceState {
         return open.containsKey(group);
     }
 
-    /** Tests only: reset the entire state to empty. */
-    void resetForTest() {
+    /**
+     * Clear the entire state. Called by the plugin when a connection is being
+     * retired (plugin shutdown, config change forcing reconnect) so a new session
+     * cannot inherit the previous session's root and mounted interfaces.
+     *
+     * Ordering: to avoid a reader observing a now-cleared interface entry while
+     * rootGroup still points at it, drop rootGroup first (so no new reader will
+     * follow the pointer) and then clear the entry map.
+     *
+     * Caller contract: this must run AFTER the owning {@link PluginConnection} has
+     * fully stopped so no in-flight {@link #apply(Frame)} call races the clear.
+     * {@code PluginConnection.stop()} synchronizes callbacks against its lifecycle
+     * monitor, so a late OkHttp callback that sneaks in after reset() will see
+     * stopped=true on the connection side and never reach apply().
+     */
+    public void reset() {
         rootGroup = null;
         open.clear();
     }

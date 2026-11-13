@@ -194,4 +194,59 @@ class FrameDecoderTest {
         Frame.Unknown u = assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(json));
         assertEquals(json, u.rawJson());
     }
+
+    // --- Strict-syntax regressions (Phase 2c-2b review P2) ---
+
+    @Test
+    void unquotedKeysAreRejected() {
+        // Regression: Gson 2.8.5's JsonParser convenience path transiently enables
+        // leniency; the strict JsonReader-driven parser must refuse unquoted keys.
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{type:'widget_set_root',group:30000}"));
+    }
+
+    @Test
+    void jsStyleCommentsAreRejected() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",/*comment*/\"group\":30000}"));
+    }
+
+    @Test
+    void singleQuotedStringsAreRejected() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{'type':'widget_set_root','group':30000}"));
+    }
+
+    @Test
+    void duplicateTopLevelKeysAreRejected() {
+        // Regression: v1 silently took the last value for a duplicate key, which
+        // would let a hostile frame shadow an earlier field. Any duplicate at the
+        // top level rejects the whole frame.
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"future_event\",\"type\":\"widget_set_root\",\"group\":30000}"));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",\"group\":1,\"group\":30000}"));
+    }
+
+    @Test
+    void trailingContentAfterObjectIsRejected() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",\"group\":30000} extra"));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",\"group\":30000}{\"type\":\"other\"}"));
+    }
+
+    @Test
+    void trailingCommaInObjectIsRejected() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_set_root\",\"group\":30000,}"));
+    }
+
+    @Test
+    void nanAndInfinityInNumbersAreRejected() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_open\",\"group\":NaN,\"modal\":true}"));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode(
+            "{\"type\":\"widget_open\",\"group\":Infinity,\"modal\":true}"));
+    }
 }
