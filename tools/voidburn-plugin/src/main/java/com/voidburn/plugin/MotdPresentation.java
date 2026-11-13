@@ -96,9 +96,21 @@ public record MotdPresentation(
         );
     }
 
+    /**
+     * Read the server-provided text for a component, honoring an explicit
+     * widget_set_hidden=true by projecting to the empty string.
+     *
+     * Null-hidden (never received) and explicit false stay visible: that
+     * preserves 2c-2b's null/false distinction for a renderer that cares
+     * (nothing here does yet), while explicit true suppresses the stored
+     * text exactly as the server intended. Storage is unchanged — a later
+     * hidden=false still reveals the original text because the Component
+     * record kept it.
+     */
     private static String text(InterfaceState.Interface motd, int componentId) {
         InterfaceState.Component c = motd.components().get(componentId);
         if (c == null || c.text() == null) return "";
+        if (Boolean.TRUE.equals(c.hidden())) return "";
         return c.text();
     }
 }

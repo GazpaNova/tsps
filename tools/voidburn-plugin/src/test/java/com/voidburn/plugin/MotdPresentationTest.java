@@ -98,6 +98,36 @@ class MotdPresentationTest {
     }
 
     @Test
+    void explicitHiddenTrueSuppressesTextInPresentation() {
+        // Regression (v1 review P2-b): v1 ignored Component.hidden, so a
+        // server-sent widget_set_hidden=true left the text visible in the
+        // overlay. v2 projects hidden=true to the empty string in the
+        // presentation; the stored component text is unchanged so a later
+        // hidden=false reveals it again.
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetSetRoot(MOTD_GROUP_ID));
+        state.apply(new Frame.WidgetSetText(uid(TITLE), "Hidden title"));
+        state.apply(new Frame.WidgetSetHidden(uid(TITLE), true));
+        assertEquals("", MotdPresentation.from(state).orElseThrow().title(),
+            "hidden=true must suppress the title in the presentation");
+
+        // Re-reveal: hidden=false brings the stored text back.
+        state.apply(new Frame.WidgetSetHidden(uid(TITLE), false));
+        assertEquals("Hidden title", MotdPresentation.from(state).orElseThrow().title(),
+            "hidden=false must restore the stored text");
+    }
+
+    @Test
+    void nullHiddenDoesNotSuppressText() {
+        // Null hidden (never received) keeps the visibility default — treat
+        // as not hidden. Only explicit true suppresses.
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetSetRoot(MOTD_GROUP_ID));
+        state.apply(new Frame.WidgetSetText(uid(TITLE), "shown"));
+        assertEquals("shown", MotdPresentation.from(state).orElseThrow().title());
+    }
+
+    @Test
     void sectionsAreImmutableAfterConstruction() {
         MotdPresentation p = new MotdPresentation(
             "t", "tg",

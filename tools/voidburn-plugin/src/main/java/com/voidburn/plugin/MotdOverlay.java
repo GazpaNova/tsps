@@ -73,10 +73,18 @@ public class MotdOverlay extends Overlay {
     }
 
     /**
-     * Local dismiss. Called by the plugin when the player clicks the overlay's
-     * "Close MOTD" right-click menu entry. The server's view of the interface
-     * is unchanged — Phase 2d will route a real click back through the
-     * gateway.
+     * Local dismiss. Called by the plugin when the player picks the overlay's
+     * "Close MOTD" right-click menu entry.
+     *
+     * RuneLite 1.13.3 note: overlay menu entries only appear when the player
+     * holds Shift while right-clicking (pinned OverlayRenderer behavior). So
+     * the real UX is "Shift + right-click on the panel → Close MOTD".
+     * Players can also disable the plugin from the RuneLite settings. A
+     * Shift-less dismiss path would need the plugin to register its own
+     * mouse adapter — left for a later patch.
+     *
+     * The server's view of the interface is unchanged — Phase 2d will route
+     * a real click back through the gateway.
      */
     public void dismiss() {
         dismissed.set(true);
@@ -88,14 +96,29 @@ public class MotdOverlay extends Overlay {
     }
 
     /**
-     * True iff the overlay should draw this tick. Factored out so tests can
-     * exercise the visibility rule without a Graphics2D. The plugin also
-     * uses this to skip right-click menu handling for a hidden overlay.
+     * True iff the overlay should draw this tick. Driven by the CURRENT custom
+     * root: MOTD is only visible while the server's active root is
+     * MOTD_GROUP_ID (set via the server's sendRootInterface, which the gateway
+     * forwards as widget_set_root). A later set_root to a different custom
+     * interface rotates rootGroup and hides this overlay automatically —
+     * regression from v1, which checked isOpen() alone and kept MOTD painted
+     * on top after a swap.
+     *
+     * Note on stock-root transitions: the accepted gateway only forwards
+     * set_root for custom groups (>= 30000). If the server rotates MOTD →
+     * stock (e.g. the player clicks the Play button and the server calls
+     * sendRootInterface(161)), the plugin won't see that today and the
+     * overlay stays visible until a new custom root lands or the player
+     * dismisses. A gateway-side extension to forward stock set_roots to an
+     * attached plugin is a later phase; the local dismiss path covers the
+     * gap in the meantime.
      */
     public boolean isShowing() {
         if (dismissed.get()) return false;
         Optional<InterfaceState> state = stateSupplier.get();
-        return state.isPresent() && state.get().isOpen(MotdPresentation.MOTD_GROUP_ID);
+        if (state.isEmpty()) return false;
+        Optional<Integer> root = state.get().rootGroup();
+        return root.isPresent() && root.get() == MotdPresentation.MOTD_GROUP_ID;
     }
 
     @Override
