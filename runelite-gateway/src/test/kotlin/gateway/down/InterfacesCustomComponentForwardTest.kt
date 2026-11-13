@@ -156,6 +156,37 @@ class InterfacesCustomComponentForwardTest {
     }
 
     @Test
+    fun `stock-161 component whose remap returns -1 is NOT forwarded as a custom frame`() {
+        // Regression (v1 review P2): v1 classified on the REMAPPED uid.
+        // InterfaceTree.remap returns -1 for a stock-161 component absent from
+        // the active layout's redirect enum; -1 ushr 16 == 65535 which trips the
+        // custom check and forwarded a stock packet with widgetId=-1 to the plugin.
+        // v2 classifies on the RAW uid, so the mis-remap now falls through to the
+        // exists/dropped path and the plugin never sees it.
+        //
+        // We simulate the mis-remap by using a custom tree lookalike that only
+        // accepts the raw uid in the existence check — the real redirect-enum
+        // behavior is cache-specific and out of this test's scope; the point is
+        // that a raw uid in group 161 must stay on the stock path.
+        val rawUid = (161 shl 16) or 94
+        val existingUids = ArrayList<Int>()
+        val stockOnlyInterfaces = Interfaces(
+            VarpMirror(VarTypes(cache)),
+            InterfaceTree(enums),
+            StockMarket { sent += it },
+            {},
+            { uid -> existingUids += uid; false }, // nothing exists → dropped path
+            { sent += it },
+            { channel },
+        )
+        stockOnlyInterfaces.handle(TspsPacket(
+            TspsServerPacket.WIDGET_SET_TEXT,
+            TspsWriter().i32(rawUid).string("chat").body(),
+        ))
+        assertTrue(forwarded.isEmpty(), "stock-161 uid must never reach the plugin channel")
+    }
+
+    @Test
     fun `custom-group set_hidden with no plugin channel is dropped`() {
         val noChannelSent = ArrayList<OutgoingGameMessage>()
         val noChannel = Interfaces(
