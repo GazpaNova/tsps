@@ -308,6 +308,38 @@ class FrameDecoderTest {
     }
 
     @Test
+    void backslashFollowedByLiteralControlCharIsRejected() {
+        // Regression (v3 review): v3 cleared the escape flag without checking the
+        // char that followed a backslash. Gson 2.8.5 accepts backslash + literal LF
+        // as a line continuation even with setLenient(false); without this check
+        // that passes the pre-scan too, and `{"...","x":"a\<LF>b"}` decoded to a
+        // valid frame. A valid JSON escape's second byte is always a printable
+        // introducer (" \ / b f n r t u), never a literal control character.
+        for (int ctrl = 0x00; ctrl <= 0x1F; ctrl++) {
+            String json = "{\"type\":\"widget_set_root\",\"group\":30000,"
+                + "\"extra\":\"a\\" + (char) ctrl + "b\"}";
+            assertInstanceOf(
+                Frame.Unknown.class,
+                FrameDecoder.decode(json),
+                "backslash + U+" + String.format("%04X", ctrl) + " must reject");
+        }
+    }
+
+    @Test
+    void validEscapesAfterBackslashStillPass() {
+        // Positive control: the common valid escapes still parse successfully.
+        for (String esc : new String[] {"\\\"", "\\\\", "\\/", "\\b", "\\f", "\\n",
+                                        "\\r", "\\t", "\\u0001"}) {
+            String json = "{\"type\":\"widget_set_root\",\"group\":30000,"
+                + "\"extra\":\"a" + esc + "b\"}";
+            assertInstanceOf(
+                Frame.WidgetSetRoot.class,
+                FrameDecoder.decode(json),
+                "valid escape `" + esc + "` must still pass");
+        }
+    }
+
+    @Test
     void shallowNestingIsStillAccepted() {
         // Nesting under MAX_DEPTH passes. The hiddenUids array is 1 level deep.
         // The "extra" object with a nested array of ints is 2 levels. Both OK.

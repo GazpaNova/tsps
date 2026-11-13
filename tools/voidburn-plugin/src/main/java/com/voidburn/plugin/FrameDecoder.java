@@ -235,6 +235,13 @@ final class FrameDecoder {
             char c = json.charAt(i);
             if (inString) {
                 if (escape) {
+                    // The character after a backslash MUST be a printable escape
+                    // introducer (valid: " \ / b f n r t u). A literal control
+                    // character here isn't a legal escape — the backslash doesn't
+                    // make it legal. Reject. Regression: Gson 2.8.5 would otherwise
+                    // accept backslash + literal LF as a line-continuation even with
+                    // lenient=false.
+                    if (c < 0x20) return true;
                     escape = false;
                 } else if (c == '\\') {
                     escape = true;
