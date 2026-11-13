@@ -23,6 +23,8 @@ public sealed interface Frame permits
     Frame.WidgetOpen,
     Frame.WidgetSetRoot,
     Frame.WidgetOpenSub,
+    Frame.WidgetSetText,
+    Frame.WidgetSetHidden,
     Frame.Unknown {
 
     /**
@@ -53,6 +55,22 @@ public sealed interface Frame permits
         int interfaceType,
         List<Integer> hiddenUids
     ) implements Frame {}
+
+    /**
+     * Gateway sends this when the server runs a {@code sendString} for a custom-
+     * group component. {@code widgetId} is the full packed uid (group in the high
+     * 16 bits, component id in the low 16 bits). {@code text} is already decoded
+     * from JSON — escape sequences are resolved, length is capped by the gateway's
+     * frame-size limit, control characters have been rejected by FrameDecoder.
+     */
+    record WidgetSetText(int widgetId, String text) implements Frame {}
+
+    /**
+     * Gateway sends this when the server flips the hidden flag on a custom-group
+     * component. {@code widgetId} packs group and component as above.
+     * {@code hidden} true means the component should not be drawn.
+     */
+    record WidgetSetHidden(int widgetId, boolean hidden) implements Frame {}
 
     /**
      * Any frame whose {@code type} discriminator isn't one of the known values above,

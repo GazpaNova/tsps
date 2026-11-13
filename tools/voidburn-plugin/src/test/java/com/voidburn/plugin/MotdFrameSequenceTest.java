@@ -51,15 +51,53 @@ class MotdFrameSequenceTest {
     }
 
     @Test
+    void motdOpenWithTextAndHiddenUpdatesReachesComponentState() {
+        // Phase 2c-3b extends the sequence: the server follows the structural
+        // open/sub frames with per-component sendString and sendInterfaceHiddenFlag
+        // for the MOTD title, body and a toggled error panel. All of those land
+        // in the component table of the MOTD Interface.
+        InterfaceState state = new InterfaceState();
+        int titleUid = (30000 << 16) | 1;
+        int bodyUid = (30000 << 16) | 2;
+        int errorUid = (30000 << 16) | 3;
+
+        state.apply(FrameDecoder.decode(
+            """
+            {"type":"widget_open","group":30000,"modal":true}"""));
+        state.apply(FrameDecoder.decode(
+            """
+            {"type":"widget_set_root","group":30000}"""));
+        state.apply(FrameDecoder.decode(String.format(
+            """
+            {"type":"widget_set_text","widgetId":%d,"text":"Welcome back, Miguel!"}""",
+            titleUid)));
+        state.apply(FrameDecoder.decode(String.format(
+            """
+            {"type":"widget_set_text","widgetId":%d,"text":"Server news and updates."}""",
+            bodyUid)));
+        state.apply(FrameDecoder.decode(String.format(
+            """
+            {"type":"widget_set_hidden","widgetId":%d,"hidden":true}""",
+            errorUid)));
+
+        assertEquals(30000, state.rootGroup().orElseThrow());
+        InterfaceState.Interface motd = state.get(30000).orElseThrow();
+        assertEquals("Welcome back, Miguel!", motd.components().get(1).text());
+        assertEquals("Server news and updates.", motd.components().get(2).text());
+        assertEquals(true, motd.components().get(3).hidden());
+    }
+
+    @Test
     void unknownFrameMidSequenceDoesNotDisturbState() {
-        // Phase 2c-3 will add widget_set_text; this test ensures the plugin is
-        // forward-compatible — an unknown frame type between known ones is simply
-        // ignored, not fatal.
+        // Forward-compat: a frame type the decoder doesn't yet know
+        // (e.g. a future widget_set_item) is simply ignored, not fatal. We use
+        // widget_set_item here because widget_set_text and widget_set_hidden
+        // are both now known types.
         InterfaceState state = new InterfaceState();
         state.apply(FrameDecoder.decode("""
             {"type":"widget_open","group":30000,"modal":true}"""));
         state.apply(FrameDecoder.decode("""
-            {"type":"widget_set_text","widgetId":123,"text":"Welcome back, Miguel!"}"""));
+            {"type":"widget_set_item","widgetId":123,"obj":4151,"count":1}"""));
         state.apply(FrameDecoder.decode("""
             {"type":"widget_set_root","group":30000}"""));
         assertEquals(30000, state.rootGroup().orElseThrow());

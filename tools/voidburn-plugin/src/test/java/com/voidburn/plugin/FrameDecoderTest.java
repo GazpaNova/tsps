@@ -68,13 +68,94 @@ class FrameDecoderTest {
     }
 
     @Test
-    void unknownTypeDecodesToUnknown() {
-        // Forward-compat: the gateway may add widget_set_text in Phase 2c-3; this
-        // plugin shouldn't crash before the decoder case lands.
+    void widgetSetTextCarriesIdAndText() {
+        int uid = (30000 << 16) | 10;
         Frame f = FrameDecoder.decode("""
-            {"type":"widget_set_text","widgetId":123,"text":"hello"}""");
+            {"type":"widget_set_text","widgetId":%d,"text":"Welcome back, Miguel!"}""".formatted(uid));
+        Frame.WidgetSetText t = assertInstanceOf(Frame.WidgetSetText.class, f);
+        assertEquals(uid, t.widgetId());
+        assertEquals("Welcome back, Miguel!", t.text());
+    }
+
+    @Test
+    void widgetSetTextWithEmptyStringIsValid() {
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_text","widgetId":100,"text":""}""");
+        Frame.WidgetSetText t = assertInstanceOf(Frame.WidgetSetText.class, f);
+        assertEquals("", t.text());
+    }
+
+    @Test
+    void widgetSetTextWithEscapesDecodesThem() {
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_text","widgetId":100,"text":"line1\\nline2\\ttabbed"}""");
+        Frame.WidgetSetText t = assertInstanceOf(Frame.WidgetSetText.class, f);
+        assertEquals("line1\nline2\ttabbed", t.text());
+    }
+
+    @Test
+    void widgetSetHiddenTrue() {
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_hidden","widgetId":123,"hidden":true}""");
+        Frame.WidgetSetHidden h = assertInstanceOf(Frame.WidgetSetHidden.class, f);
+        assertEquals(123, h.widgetId());
+        assertEquals(true, h.hidden());
+    }
+
+    @Test
+    void widgetSetHiddenFalse() {
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_hidden","widgetId":123,"hidden":false}""");
+        Frame.WidgetSetHidden h = assertInstanceOf(Frame.WidgetSetHidden.class, f);
+        assertEquals(false, h.hidden());
+    }
+
+    @Test
+    void widgetSetTextMissingTextDecodesToUnknown() {
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_text","widgetId":100}""");
         Frame.Unknown u = assertInstanceOf(Frame.Unknown.class, f);
         assertEquals("widget_set_text", u.type());
+    }
+
+    @Test
+    void widgetSetTextMissingWidgetIdDecodesToUnknown() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_text","text":"hi"}"""));
+    }
+
+    @Test
+    void widgetSetTextWithNonStringTextDecodesToUnknown() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_text","widgetId":100,"text":42}"""));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_text","widgetId":100,"text":null}"""));
+    }
+
+    @Test
+    void widgetSetHiddenMissingFieldDecodesToUnknown() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_hidden","widgetId":100}"""));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_hidden","hidden":true}"""));
+    }
+
+    @Test
+    void widgetSetHiddenNonBoolHiddenDecodesToUnknown() {
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_hidden","widgetId":100,"hidden":1}"""));
+        assertInstanceOf(Frame.Unknown.class, FrameDecoder.decode("""
+            {"type":"widget_set_hidden","widgetId":100,"hidden":"true"}"""));
+    }
+
+    @Test
+    void stillUnknownTypeDecodesToUnknown() {
+        // Future-compat: a frame type we don't recognise (e.g. a widget_set_item
+        // that lands later) still decodes to Unknown without crashing.
+        Frame f = FrameDecoder.decode("""
+            {"type":"widget_set_item","widgetId":123,"obj":4151,"count":1}""");
+        Frame.Unknown u = assertInstanceOf(Frame.Unknown.class, f);
+        assertEquals("widget_set_item", u.type());
     }
 
     @Test

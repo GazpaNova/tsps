@@ -37,23 +37,38 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InterfaceState {
     /**
      * One open custom interface. Carries its group id, the server's modal flag (as
-     * delivered in widget_open; advisory on the plugin side) and the list of sub-
-     * interfaces mounted beneath it, each with its own state. The record is immutable;
-     * state transitions create a new Interface via {@link #withSub} / {@link #withModal}.
+     * delivered in widget_open; advisory on the plugin side), the list of sub-
+     * interfaces mounted beneath it, and the per-component state (text and hidden
+     * flag) written by widget_set_text / widget_set_hidden. Components are keyed
+     * by their component id (the low 16 bits of a packed widget uid); the group
+     * is implicit in the enclosing Interface. The record is immutable; state
+     * transitions create a new Interface via {@code with…}.
      */
-    public record Interface(int group, boolean modal, Map<Integer, SubMount> subMounts) {
+    public record Interface(
+        int group,
+        boolean modal,
+        Map<Integer, SubMount> subMounts,
+        Map<Integer, Component> components
+    ) {
         public Interface {
             subMounts = Map.copyOf(subMounts);
+            components = Map.copyOf(components);
         }
 
         Interface withModal(boolean newModal) {
-            return new Interface(group, newModal, subMounts);
+            return new Interface(group, newModal, subMounts, components);
         }
 
         Interface withSub(SubMount mount) {
             Map<Integer, SubMount> next = new java.util.HashMap<>(subMounts);
             next.put(mount.target(), mount);
-            return new Interface(group, modal, next);
+            return new Interface(group, modal, next, components);
+        }
+
+        Interface withComponent(int componentId, Component updated) {
+            Map<Integer, Component> next = new java.util.HashMap<>(components);
+            next.put(componentId, updated);
+            return new Interface(group, modal, subMounts, next);
         }
     }
 
@@ -74,6 +89,28 @@ public final class InterfaceState {
         }
     }
 
+    /**
+     * Per-component mutable state (as delivered on the wire) with an immutable
+     * record representation. {@code text} is null when no widget_set_text has
+     * been seen for this component. {@code hidden} is null when no
+     * widget_set_hidden has been seen — the renderer should treat null as
+     * "fall back to the interface definition's default visibility".
+     *
+     * Using nulls instead of empty/false defaults preserves the distinction
+     * between "server has not told us" and "server has told us the empty value",
+     * which matters for the first render frame after a late attach.
+     */
+    public record Component(String text, Boolean hidden) {
+        /** Factory for a freshly-updated-text state preserving a prior hidden value. */
+        static Component withText(Component prior, String text) {
+            return new Component(text, prior == null ? null : prior.hidden);
+        }
+        /** Factory for a freshly-updated-hidden state preserving a prior text value. */
+        static Component withHidden(Component prior, boolean hidden) {
+            return new Component(prior == null ? null : prior.text, hidden);
+        }
+    }
+
     /** Current custom root, if the server set one; null when no custom root is active. */
     private volatile Integer rootGroup = null;
 
@@ -89,14 +126,15 @@ public final class InterfaceState {
     public void apply(Frame frame) {
         if (frame instanceof Frame.WidgetOpen o) {
             open.compute(o.group(), (g, prev) -> prev == null
-                ? new Interface(g, o.modal(), Collections.emptyMap())
+                ? new Interface(g, o.modal(), Collections.emptyMap(), Collections.emptyMap())
                 : prev.withModal(o.modal()));
         } else if (frame instanceof Frame.WidgetSetRoot r) {
             // Populate the Interface entry BEFORE publishing rootGroup. A client
             // thread reader that observes the new rootGroup will then always find a
             // matching entry on its next get() call. Previously these ran in the
             // opposite order and a reader could race in between.
-            open.computeIfAbsent(r.group(), g -> new Interface(g, true, Collections.emptyMap()));
+            open.computeIfAbsent(r.group(),
+                g -> new Interface(g, true, Collections.emptyMap(), Collections.emptyMap()));
             rootGroup = r.group();
         } else if (frame instanceof Frame.WidgetOpenSub s) {
             SubMount mount = new SubMount(
@@ -111,10 +149,34 @@ public final class InterfaceState {
                 // We might see widget_open_sub before widget_open if the server batches
                 // them unusually; fabricate a modal=true parent so the sub has a home.
                 // (widget_open is typically first in the real sequence.)
-                ? new Interface(g, true, Map.of(mount.target(), mount))
+                ? new Interface(g, true, Map.of(mount.target(), mount), Collections.emptyMap())
                 : prev.withSub(mount));
+        } else if (frame instanceof Frame.WidgetSetText t) {
+            applyComponentUpdate(t.widgetId(), prev -> Component.withText(prev, t.text()));
+        } else if (frame instanceof Frame.WidgetSetHidden h) {
+            applyComponentUpdate(h.widgetId(), prev -> Component.withHidden(prev, h.hidden()));
         }
         // Frame.Unknown and any future unmatched type: no state change.
+    }
+
+    /**
+     * Apply a per-component mutator to the interface addressed by the full packed
+     * {@code widgetId}. Creates a placeholder Interface for the group if the
+     * widget_open hasn't arrived yet (same tolerance as the widget_open_sub path),
+     * so a set_text/set_hidden that lands in an unusual ordering still gets
+     * recorded. The group default in that case is {@code modal=true}.
+     */
+    private void applyComponentUpdate(int widgetId, java.util.function.Function<Component, Component> update) {
+        int group = widgetId >>> 16;
+        int componentId = widgetId & 0xFFFF;
+        open.compute(group, (g, prev) -> {
+            Component prior = prev == null ? null : prev.components().get(componentId);
+            Component next = update.apply(prior);
+            if (prev == null) {
+                return new Interface(g, true, Collections.emptyMap(), Map.of(componentId, next));
+            }
+            return prev.withComponent(componentId, next);
+        });
     }
 
     /** The current custom root group, or empty when no custom root is active. */

@@ -2,6 +2,7 @@ package com.voidburn.plugin;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
@@ -156,7 +157,7 @@ class InterfaceStateTest {
         // state by holding a reference to the original map it passed in.
         java.util.HashMap<Integer, InterfaceState.SubMount> original = new java.util.HashMap<>();
         original.put(1, new InterfaceState.SubMount(0, 1, 30000, 0, java.util.Set.of()));
-        InterfaceState.Interface i = new InterfaceState.Interface(30000, true, original);
+        InterfaceState.Interface i = new InterfaceState.Interface(30000, true, original, java.util.Map.of());
         original.clear();
         assertEquals(1, i.subMounts().size(), "Interface subMounts must be a defensive copy");
     }
@@ -200,6 +201,100 @@ class InterfaceStateTest {
         state.apply(new Frame.WidgetOpen(30020, false));
         assertTrue(state.isOpen(30020));
         assertFalse(state.isOpen(30000));
+    }
+
+    // --- Phase 2c-3b component table ---
+
+    @Test
+    void widgetSetTextRecordsText() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        int uid = (30000 << 16) | 10;
+        state.apply(new Frame.WidgetSetText(uid, "Welcome back, Miguel!"));
+        InterfaceState.Component c = state.get(30000).orElseThrow().components().get(10);
+        assertEquals("Welcome back, Miguel!", c.text());
+        assertNull(c.hidden(), "hidden should stay null when only set_text was seen");
+    }
+
+    @Test
+    void widgetSetHiddenRecordsHiddenPreservingText() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        int uid = (30000 << 16) | 10;
+        state.apply(new Frame.WidgetSetText(uid, "body"));
+        state.apply(new Frame.WidgetSetHidden(uid, true));
+        InterfaceState.Component c = state.get(30000).orElseThrow().components().get(10);
+        assertEquals("body", c.text(), "set_hidden must preserve prior text");
+        assertEquals(true, c.hidden());
+    }
+
+    @Test
+    void widgetSetTextOverwritesPriorText() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        int uid = (30000 << 16) | 10;
+        state.apply(new Frame.WidgetSetText(uid, "first"));
+        state.apply(new Frame.WidgetSetText(uid, "second"));
+        assertEquals("second", state.get(30000).orElseThrow().components().get(10).text());
+    }
+
+    @Test
+    void widgetSetTextForGroupNotYetOpenedCreatesPlaceholder() {
+        // Robustness: a set_text can arrive before the server sends widget_open
+        // (unusual batching or a reconnect mid-stream). The state fabricates a
+        // modal=true parent so the component has a home.
+        InterfaceState state = new InterfaceState();
+        int uid = (30020 << 16) | 5;
+        state.apply(new Frame.WidgetSetText(uid, "orphan"));
+        assertTrue(state.isOpen(30020));
+        InterfaceState.Interface parent = state.get(30020).orElseThrow();
+        assertEquals("orphan", parent.components().get(5).text());
+    }
+
+    @Test
+    void twoComponentsOnOneInterfaceAreIndependent() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        state.apply(new Frame.WidgetSetText((30000 << 16) | 1, "a"));
+        state.apply(new Frame.WidgetSetText((30000 << 16) | 2, "b"));
+        state.apply(new Frame.WidgetSetHidden((30000 << 16) | 1, true));
+        InterfaceState.Interface open = state.get(30000).orElseThrow();
+        assertEquals("a", open.components().get(1).text());
+        assertEquals(true, open.components().get(1).hidden());
+        assertEquals("b", open.components().get(2).text());
+        assertNull(open.components().get(2).hidden());
+    }
+
+    @Test
+    void componentUpdatePreservesSubMounts() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        state.apply(new Frame.WidgetOpenSub(1, (30000 << 16) | 20, 30001, 0, List.of()));
+        state.apply(new Frame.WidgetSetText((30000 << 16) | 10, "body"));
+        InterfaceState.Interface open = state.get(30000).orElseThrow();
+        assertEquals(1, open.subMounts().size(), "sub mount survives a component update");
+        assertEquals("body", open.components().get(10).text());
+    }
+
+    @Test
+    void componentTableIsAlsoDefensivelyCopied() {
+        java.util.HashMap<Integer, InterfaceState.Component> originalComps =
+            new java.util.HashMap<>();
+        originalComps.put(1, new InterfaceState.Component("hello", false));
+        InterfaceState.Interface i = new InterfaceState.Interface(
+            30000, true, java.util.Map.of(), originalComps);
+        originalComps.clear();
+        assertEquals(1, i.components().size(),
+            "Interface components must be a defensive copy");
+    }
+
+    @Test
+    void resetClearsComponentsToo() {
+        InterfaceState state = new InterfaceState();
+        state.apply(new Frame.WidgetOpen(30000, true));
+        state.apply(new Frame.WidgetSetText((30000 << 16) | 10, "hi"));
+        state.reset();
+        assertTrue(state.get(30000).isEmpty());
     }
 
     @Test

@@ -114,6 +114,10 @@ final class FrameDecoder {
                 return decodeWidgetSetRoot(fields, json);
             case "widget_open_sub":
                 return decodeWidgetOpenSub(fields, json);
+            case "widget_set_text":
+                return decodeWidgetSetText(fields, json);
+            case "widget_set_hidden":
+                return decodeWidgetSetHidden(fields, json);
             default:
                 return new Frame.Unknown(type, json);
         }
@@ -274,6 +278,29 @@ final class FrameDecoder {
             return new Frame.Unknown("widget_set_root", raw);
         }
         return new Frame.WidgetSetRoot(group);
+    }
+
+    private static Frame decodeWidgetSetText(java.util.Map<String, Value> fields, String raw) {
+        Integer widgetId = asInt(fields.get("widgetId"));
+        String text = asString(fields.get("text"));
+        if (widgetId == null || text == null) {
+            return new Frame.Unknown("widget_set_text", raw);
+        }
+        return new Frame.WidgetSetText(widgetId, text);
+    }
+
+    private static Frame decodeWidgetSetHidden(java.util.Map<String, Value> fields, String raw) {
+        Integer widgetId = asInt(fields.get("widgetId"));
+        Boolean hidden = asBool(fields.get("hidden"));
+        if (widgetId == null || hidden == null) {
+            return new Frame.Unknown("widget_set_hidden", raw);
+        }
+        return new Frame.WidgetSetHidden(widgetId, hidden);
+    }
+
+    private static String asString(Value v) {
+        if (v == null || v.kind != Value.Kind.STRING) return null;
+        return v.stringValue;
     }
 
     private static Frame decodeWidgetOpenSub(java.util.Map<String, Value> fields, String raw) {
