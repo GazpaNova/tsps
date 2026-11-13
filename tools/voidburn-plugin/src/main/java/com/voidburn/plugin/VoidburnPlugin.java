@@ -1,12 +1,17 @@
 package com.voidburn.plugin;
 
 import com.google.inject.Provides;
+import java.util.Optional;
 import javax.inject.Inject;
+import net.runelite.api.Client;
+import net.runelite.api.MenuAction;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.OverlayMenuClicked;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.ui.overlay.OverlayManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,14 +40,21 @@ public class VoidburnPlugin extends Plugin {
     @Inject
     private VoidburnConfig config;
 
+    @Inject
+    private Client client;
+
+    @Inject
+    private OverlayManager overlayManager;
+
     /**
      * Live view of what custom interfaces are open on this session. Written from the
      * OkHttp dispatcher via onFrame; readable from any thread (the InterfaceState's
-     * records are immutable and its backing map is a ConcurrentHashMap). Phase 2c-3's
-     * overlay will consult this from the RuneLite client thread.
+     * records are immutable and its backing map is a ConcurrentHashMap). Phase 2c-3c
+     * consumes this on the client thread from MotdOverlay.
      */
     private final InterfaceState interfaceState = new InterfaceState();
 
+    private MotdOverlay motdOverlay;
     private PluginConnection connection;
 
     @Provides
@@ -53,6 +65,8 @@ public class VoidburnPlugin extends Plugin {
     @Override
     protected void startUp() {
         log.info("Voidburn plugin starting");
+        motdOverlay = new MotdOverlay(client, () -> Optional.of(interfaceState));
+        overlayManager.add(motdOverlay);
         openConnection();
     }
 
@@ -60,6 +74,25 @@ public class VoidburnPlugin extends Plugin {
     protected void shutDown() {
         log.info("Voidburn plugin stopping");
         closeConnection();
+        if (motdOverlay != null) {
+            overlayManager.remove(motdOverlay);
+            motdOverlay = null;
+        }
+    }
+
+    /**
+     * RuneLite dispatches this when the player picks one of the overlay's
+     * right-click menu entries. "Close MOTD" dismisses locally; Phase 2d will
+     * route a real server-side click through the gateway instead.
+     */
+    @Subscribe
+    public void onOverlayMenuClicked(OverlayMenuClicked event) {
+        if (motdOverlay == null) return;
+        if (event.getOverlay() != motdOverlay) return;
+        if (event.getEntry().getMenuAction() != MenuAction.RUNELITE_OVERLAY) return;
+        if ("Close MOTD".equals(event.getEntry().getOption())) {
+            motdOverlay.dismiss();
+        }
     }
 
     @Subscribe
@@ -80,6 +113,14 @@ public class VoidburnPlugin extends Plugin {
         if (url.isEmpty() || username.isEmpty() || token.isEmpty()) {
             log.info("Voidburn plugin: config incomplete (gatewayUrl/username/token required) — not connecting");
             return;
+        }
+        // A fresh session should show MOTD again — clear any local dismissal
+        // from the retired connection. The InterfaceState reset already ran in
+        // closeConnection() so the overlay won't show the OLD session's MOTD
+        // between here and the first frame; it just re-arms the show logic for
+        // when the new session's widget_open lands.
+        if (motdOverlay != null) {
+            motdOverlay.reset();
         }
         connection = new PluginConnection(url, username, token, this::onFrame);
         connection.start();
