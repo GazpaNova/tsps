@@ -489,14 +489,15 @@ class Interfaces(
         const val CUSTOM_INTERFACE_START = 30_000
 
         /**
-         * Upper bound on the pre-attach replay buffer size in characters of
-         * encoded JSON. 64 KiB is ~30x the size of the shipped MOTD payload
-         * (root + open + ~10 text updates ≈ 2 KiB) so the typical session
-         * never comes close. A session that keeps buffering past this bound
-         * is in pathological territory (plugin never attaches, server
-         * flooding custom interfaces); the overflow drops newest packets
-         * so the earlier widget_set_root / widget_open the plugin needs
-         * to establish state stay intact.
+         * Upper bound on the pre-attach replay buffer size in UTF-8 bytes of
+         * encoded JSON (the wire representation). 64 KiB is ~30x the size of
+         * the shipped MOTD payload (root + open + ~10 text updates ≈ 2 KiB)
+         * so the typical session never comes close. A session that keeps
+         * buffering past this bound is in pathological territory (plugin
+         * never attaches, server flooding custom interfaces); the overflow
+         * drops newest packets so the earlier widget_set_root / widget_open
+         * the plugin needs to establish state stay intact. See
+         * {@link #ReplayEntry} for the per-entry byte accounting.
          */
         const val MAX_REPLAY_BUFFER_BYTES = 64 * 1024
         const val ARG_STRING = 0
