@@ -198,7 +198,7 @@ test('real login bootstraps before snapshots and completes recovery before deskt
     try {
       connection.enterWorld(mobile ? 1 : 0);
       const loginLines = connection.player.getSession().pendingPackets
-        .filter(packet => packet.includes(Buffer.from('Welcome to Old School RuneScape.')));
+        .filter(packet => packet.includes(Buffer.from(`Welcome to ${core.WorldDefinition.getWorldDefinition().name}.`)));
       assert.equal(loginLines.length, 1, 'the chatbox login line is sent exactly once');
       const tabIndex = order.findIndex(row => row[0] === 'sendTabInterface');
       const memberIndex = order.findIndex(row => row[0] === 'sendInterfaceScript' && row[1] === 828);

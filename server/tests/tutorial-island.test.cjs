@@ -313,7 +313,10 @@ test("a newly built chatbox doesn't show the login messages over the step text",
   assert.equal(sent.varbits.get(ALLOW_MES_OVERLAP), 1, "messages show over the step from the next tick");
 });
 
-test("an existing player still gets the welcome screen", async () => {
+test("an existing player still gets the welcome screen", async (t) => {
+  const originalConfig = PluginManager.getPluginConfig.bind(PluginManager);
+  t.mock.method(PluginManager, "getPluginConfig", (key, fallback) =>
+    key === "WelcomeScreen:deferToMotd" ? false : originalConfig(key, fallback));
   const { player } = tutorialPlayer(1000, 3222, 3218);
   const roots = [];
   const base = player.getPacketSender();
