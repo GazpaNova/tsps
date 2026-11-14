@@ -1,81 +1,148 @@
 # Voidburn RuneLite plugin
 
-Lets RuneLite users on Voidburn see server-sent custom interfaces (MOTD, custom
-shops, teleport menus — anything whose group id is `>= 30000`) that the official
-OSRS client has no cached definition for.
-
-Build artifact: a RuneLite plugin JAR. For now it's loaded through a small
-developer launcher (`VoidburnPluginLauncher`) that registers the plugin with
-`ExternalPluginManager.loadBuiltin` before launching RuneLite. User-facing
-distribution via the RuneLite Plugin Hub is a future phase.
+Lets RuneLite players on Voidburn see server-sent custom interfaces (MOTD,
+custom shops, teleport menus — anything with group id `>= 30000`) that the
+official OSRS client has no cached definition for.
 
 ```
-RuneLite ─ plugin ──── WebSocket /plugin ────▶ Voidburn gateway
-                       (attach + token)          (voidburn-plugin-port)
+RuneLite ── plugin ──── WebSocket /plugin ────▶ Voidburn gateway
+                        (attach + token)         (VOIDBURN_PLUGIN_PORT)
 ```
 
-The plugin authenticates with a per-session token the player gets from the game
-server right after login — a chat message that reads
-`RuneLite plugin token: <token>` — and pastes into the plugin's config. The
-gateway's side of this handshake is in `runelite-gateway/src/main/kotlin/
-gateway/plugin/`; see its Phase 2b/2c-1 handoffs for the protocol, the
-authorization model and the limits.
+## Current capabilities
 
-Phase 2c-2a (this module's current state): the plugin connects, authenticates,
-and logs every frame the gateway forwards. It does NOT yet decode frames into
-typed shapes or draw anything on the RuneLite canvas — that is Phase 2c-2b
-(decoder + interface state) and 2c-3 (rendering).
+- **Attach + authenticate** with a per-session token the gateway sends as a
+  game chat message after login (`"RuneLite plugin token: <token>"`).
+- **Auto-pair** at login: the plugin reads the token chat line and fills the
+  config itself, and picks up the OSRS username from the logged-in player.
+  No manual Settings pass once the plugin is installed and the launcher's
+  default gateway URL is correct. Fall back to manual mode by turning off
+  "Auto-pair on login".
+- **MOTD overlay**: renders the server-sent welcome panel (title, tagline,
+  about/rates/changes/what's-new sections, three footer URL lines, a Play
+  button), tracked by `widget_set_text` and `widget_set_hidden` updates.
+- **Play button click** → routed through the gateway as an `if_button_x`
+  packet to tsps. Overlay dismisses locally on click for instant feedback;
+  the server's root rotation retires the MOTD state authoritatively.
+- **URL footer clicks** open in the player's default browser via
+  `java.awt.Desktop.browse` without a server round-trip. Strict
+  `https?://`-scheme filter plus a non-empty-host check at the boundary.
+- **Shift + right-click → "Close MOTD"** for a local dismiss without
+  clicking Play (when the overlay is partially covering something the player
+  wants to see first).
+
+## Server + gateway prerequisites
+
+The plugin is one half of the Voidburn MOTD path. For a RuneLite player to
+actually see the MOTD panel, the operator also needs:
+
+- **`WelcomeScreen:deferToMotd = true`** in the world's plugin config, so
+  the server runs the MOTD plugin (otherwise the stock 378 welcome shows).
+- **Gateway `ADVERTISE_VOIDBURN_PLUGIN_CAPABILITY=true`** and
+  **`VOIDBURN_PLUGIN_PORT=<port>`** on the Voidburn gateway. Without the
+  capability bit at handshake, tsps routes native sessions to the stock
+  welcome; without the listener port, the plugin can't attach. The config's
+  `init` block rejects advertise=true + port=0.
+- **Late-attach replay buffer** on the gateway (already in place), so
+  MOTD packets the server emits during the pre-attach window are buffered
+  in order and delivered when the plugin attaches.
+
+See `runelite-gateway/README` for the gateway side.
 
 ## Build
 
-You need Java 21 and network access to `repo.runelite.net` for the
-`net.runelite:client` dependency. This module has no wrapper of its own;
-the repository's existing Gradle wrapper under `runelite-gateway/` drives it:
+Java 21 and network access to `repo.runelite.net` for the
+`net.runelite:client` dependency. The repository's existing Gradle wrapper
+under `runelite-gateway/` drives this module too:
 
 ```bash
 bash runelite-gateway/gradlew -p tools/voidburn-plugin test build
 ```
 
-The compiled JAR is `build/libs/voidburn-plugin-0.1.0.jar`.
+Artifact: `tools/voidburn-plugin/build/libs/voidburn-plugin-<version>.jar`.
+
+The JAR contains only the plugin's own classes + resources. Every
+transitive dependency the plugin uses — Guice (plugin DI), OkHttp
+(WebSocket), Gson (JSON), SLF4J (logging) — comes from the RuneLite
+client at runtime, so no shadow/shade step is needed. The manifest
+carries `Implementation-Title`, `Implementation-Version`,
+`Implementation-Vendor`, and `Plugin-Class` (informational, for tooling
+that inspects the JAR without parsing the class tree).
+
+Jar entries are produced with `preserveFileTimestamps = false` and
+`reproducibleFileOrder = true`, so a clean rebuild from the same source
+commit produces a byte-identical JAR. A launcher's integrity check (SHA
+of the bundled JAR) stays stable between builds.
+
+## Bundling into a launcher
+
+Stock RuneLite 1.13.3 loads external plugins via
+`ExternalPluginManager.loadBuiltin(…)` before `RuneLite.main(…)` — not
+from a drop-in directory, not from an ordinary classpath entry. A launcher
+that ships with the Voidburn plugin preinstalled follows the same pattern
+`VoidburnPluginLauncher` uses in the dev workflow:
+
+1. Add `voidburn-plugin-<version>.jar` and the RuneLite client JAR to the
+   launcher's classpath (both are produced through the normal RuneLite
+   external-plugin build chain).
+2. Launcher's `main` calls, in order:
+
+   ```java
+   ExternalPluginManager.loadBuiltin(com.voidburn.plugin.VoidburnPlugin.class);
+   RuneLite.main(args);
+   ```
+
+   The `Plugin-Class` manifest attribute names the class if you're
+   generating the loader list dynamically from a bundled plugins
+   directory.
+
+3. On first launch, write the production gateway URL to RuneLite's
+   config for the Voidburn plugin's `gatewayUrl` key (config group
+   `voidburn`). The plugin's default is a dev loopback URL
+   (`ws://127.0.0.1:8081/plugin`) that a vanilla RuneLite user would edit
+   themselves — a launcher-bundled player should never see or touch that
+   setting.
+
+4. That's it on the plugin side. The server/gateway prereqs above
+   complete the path.
+
+### What the launcher does NOT need to supply
+
+- **Token** — the plugin auto-captures it from the post-login chat
+  message. The launcher doesn't see or handle tokens.
+- **Username** — the plugin auto-fills from
+  `Client.getLocalPlayer().getName()` at `GameStateChanged(LOGGED_IN)`.
+- **Per-player config** — the plugin's defaults + auto-pair are enough
+  for the common case. The launcher only writes the single
+  `voidburn.gatewayUrl` key on first install.
 
 ## Run (dev workflow)
 
-Stock RuneLite 1.13.3 loads external plugins via
-`ExternalPluginManager.loadBuiltin(…)` before `RuneLite.main(…)` — not from
-a drop-in directory, and not from an ordinary classpath entry. This module
-ships a small launcher at `src/test/java/com/voidburn/plugin/VoidburnPluginLauncher.java`
-that follows the stock pattern.
+Runs through `src/test/java/com/voidburn/plugin/VoidburnPluginLauncher`,
+excluded from the production JAR. From an IDE: Run that main class as a
+Java application; program arguments forward to `RuneLite.main(args)`.
+Pass `--developer-mode` to enable developer tooling.
 
-To run RuneLite with the plugin loaded during development:
+Once RuneLite is up, open the settings panel for the "Voidburn" plugin and
+fill in the Gateway URL (e.g. `ws://127.0.0.1:8081/plugin` for a local
+gateway). Everything else auto-fills on next login as long as "Auto-pair
+on login" is on (default).
 
-- From an IDE: Run `com.voidburn.plugin.VoidburnPluginLauncher` as a Java
-  application. Program arguments are forwarded to `RuneLite.main(args)`;
-  pass `--developer-mode` to enable developer tooling.
-- From the command line: launch the test classpath directly. The exact
-  invocation depends on how you resolve the RuneLite jar (Gradle, your
-  IDE's classpath, or an exported script); see RuneLite's own
-  [example-plugin](https://github.com/runelite/example-plugin) for the
-  canonical shape.
+The token rotates every login; auto-pair reads the new one from each
+login's chat message.
 
-Once RuneLite is up:
+## Scope limits
 
-1. Open the settings panel for the "Voidburn" plugin.
-2. Fill in:
-   - **Gateway URL** — e.g. `ws://127.0.0.1:8081/plugin` for a local gateway.
-   - **OSRS username** — your in-game display name, case-sensitive.
-   - **Session token** — paste the token Voidburn messaged you after login.
-3. The plugin connects, authenticates, and logs received frames at DEBUG.
-
-The token rotates every time you log in; paste in the new one if you relog.
-
-## Not yet in this module
-
-- Frame decoder and interface state (Phase 2c-2b).
-- Overlay rendering (Phase 2c-3).
-- Click handling (Phase 2d).
-- Signed distribution via the RuneLite Plugin Hub (later).
+- No Plugin Hub submission yet. Distribution is via the Voidburn launcher
+  bundle (see above).
+- Stock-root transitions (server rotating MOTD → 161 after Play) are not
+  forwarded to the plugin; the overlay dismisses locally on Play click to
+  cover the common case.
+- URL extraction is a regex over the server-authored label text. A future
+  gateway/server addition that pushes a `urls` map to the plugin
+  explicitly is tracked but out of scope here.
 
 ## License
 
-The plugin is part of Voidburn (same license as the rest of this repo). The
-RuneLite client dependency keeps its own license (BSD-2, net.runelite).
+Part of Voidburn (same license as the rest of this repo). The RuneLite
+client dependency keeps its own license (BSD-2, net.runelite).

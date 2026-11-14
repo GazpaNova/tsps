@@ -51,3 +51,37 @@ test {
   maxHeapSize = '2g'
   testLogging { events 'failed'; showStandardStreams = true }
 }
+
+// Distribution artifact for a launcher to bundle. The plugin's own JAR
+// contains just the plugin classes + resources; every transitive dependency
+// (Guice, OkHttp, Gson, SLF4J) comes from the RuneLite client at runtime,
+// so no shadow/shade step is needed. The launcher adds this JAR to its
+// classpath and calls
+//
+//   ExternalPluginManager.loadBuiltin(com.voidburn.plugin.VoidburnPlugin.class);
+//   RuneLite.main(args);
+//
+// to register the plugin with RuneLite's normal plugin set before launch —
+// same pattern VoidburnPluginLauncher uses in the test sources for the
+// dev workflow. See README "Bundling into a launcher".
+jar {
+  archiveBaseName = 'voidburn-plugin'
+  // Deterministic artifact: no jar entry timestamps, no reproducible-build
+  // noise. Makes a launcher's integrity check (SHA of the bundled JAR)
+  // stable across clean rebuilds from the same source commit.
+  preserveFileTimestamps = false
+  reproducibleFileOrder = true
+  manifest {
+    attributes(
+        'Implementation-Title': 'Voidburn RuneLite plugin',
+        'Implementation-Version': project.version,
+        'Implementation-Vendor': 'Voidburn',
+        // Plugin entry class — informational. ExternalPluginManager.loadBuiltin
+        // takes the Class<?> directly from the launcher's code; the manifest
+        // attribute is for tooling (jar inspection, launcher packaging
+        // scripts) that wants to know which class to load without parsing
+        // the JAR's class tree.
+        'Plugin-Class': 'com.voidburn.plugin.VoidburnPlugin',
+    )
+  }
+}
