@@ -290,7 +290,18 @@ class GatewaySession(
         // Unregistered in close().
         voidburnPluginRegistration = context.voidburnPluginRegistry.register(
             handshake.name,
-            attach = { channel -> voidburnPluginChannel = channel },
+            attach = { channel ->
+                voidburnPluginChannel = channel
+                // On a successful attach (non-null), marshal a drain of the
+                // pre-attach replay buffer onto the session executor. The
+                // attach callback itself runs under the registry's publish
+                // lock on the plugin I/O thread; the buffer is session-
+                // thread only (see Interfaces.replayBuffer), so the drain
+                // has to hop threads before touching it.
+                if (channel != null) {
+                    run { interfaces.onPluginChannelAttached() }
+                }
+            },
             // Constant-time compare so a hostile client can't probe the token one byte
             // at a time by watching timing. The token is short, but the habit is right.
             authorize = { submitted -> tokensEqual(submitted, voidburnPluginToken) },
@@ -601,6 +612,11 @@ class GatewaySession(
         voidburnPluginRegistration?.let { context.voidburnPluginRegistry.unregister(it) }
         voidburnPluginRegistration = null
         voidburnPluginToken = null
+        // Drop any buffered custom-interface packets the plugin never attached
+        // in time to receive. Reconnection creates a new GatewaySession with
+        // a fresh Interfaces instance, so retaining the buffer here would
+        // leak into nothing anyway.
+        interfaces.clearReplayBuffer()
         if (::tsps.isInitialized) tsps.close()
         session?.flush()
         session?.requestClose()

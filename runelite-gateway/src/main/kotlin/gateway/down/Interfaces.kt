@@ -7,6 +7,7 @@ import gateway.session.VoidburnPluginChannel
 import gateway.tsps.TspsPacket
 import gateway.tsps.TspsReader
 import gateway.tsps.TspsServerPacket
+import java.util.logging.Logger
 import net.rsprot.protocol.game.outgoing.interfaces.IfCloseSub
 import net.rsprot.protocol.game.outgoing.interfaces.IfMoveSub
 import net.rsprot.protocol.game.outgoing.interfaces.IfOpenSub
@@ -53,6 +54,44 @@ class Interfaces(
      */
     private val voidburnChannel: () -> VoidburnPluginChannel? = { null },
 ) {
+    private val log = Logger.getLogger(Interfaces::class.java.name)
+
+    /**
+     * Pre-attach replay buffer for custom-interface packets. A plugin
+     * attaches over its own WebSocket a few seconds after login (player
+     * sees the gateway's token chat → plugin reads it → reconnects →
+     * authorize); the server's MOTD + custom-interface packets land in
+     * that gap. v1 of custom-interface forwarding just dropped them
+     * because {@link #voidburnChannel} returned null; v2 buffers in FIFO
+     * order and drains when the plugin attaches.
+     *
+     * Session-thread only: every mutation (forwardCustomInterface,
+     * drainReplayBuffer, clearReplayBuffer) runs on the session executor.
+     * GatewaySession's attach callback marshals the attach signal from
+     * the plugin I/O thread onto the session executor before calling
+     * {@link #onPluginChannelAttached}, so no external synchronization is
+     * needed here.
+     *
+     * Ordering: buffer-then-drain even after attach, so a packet arriving
+     * while the buffer has earlier entries can never jump ahead of them.
+     */
+    /**
+     * One buffered custom-interface packet, carrying both the JSON payload
+     * and its UTF-8 byte size. The byte size is computed once at enqueue
+     * time and reused on removal so the running total ({@link #replayBufferBytes})
+     * stays truthful without re-encoding on every drain.
+     *
+     * Using UTF-8 bytes (not {@link String#length}, which counts UTF-16
+     * code units) matches the wire representation
+     * {@code VoidburnPluginServer} writes, so the 64 KiB bound is a real
+     * resource/wire budget rather than an ASCII-only approximation.
+     */
+    private data class ReplayEntry(val json: String, val bytes: Int)
+
+    private val replayBuffer = ArrayDeque<ReplayEntry>()
+    private var replayBufferBytes = 0
+    private var replayBufferOverflowLogged = false
+
     /** Returns false for a message this translator doesn't handle. */
     fun handle(packet: TspsPacket): Boolean {
         val reader = packet.reader()
@@ -341,10 +380,16 @@ class Interfaces(
     private fun TspsReader.optionalU8() = if (remaining > 0) u8() else 0
 
     /**
-     * Serializes a custom-interface event as JSON and sends it to the plugin, returning
-     * true when a plugin is connected and the message was handed off (delivery is
-     * best-effort; the channel decides what "delivered" means). Returns false when no
-     * plugin channel is attached, so the caller can drop as before.
+     * Serializes a custom-interface event as JSON and either forwards it to the attached
+     * plugin or buffers it for replay once a plugin attaches. Returns true when the
+     * message was handed off OR buffered (callers treat buffering as success — the
+     * server-side plugin's state machine will see the packet eventually either way);
+     * returns false only when the message was dropped because the buffer is full.
+     *
+     * Ordering invariant: the buffer is session-thread only (see
+     * {@link #onPluginChannelAttached} for the plugin-thread → session-thread marshal).
+     * Every packet goes through buffer-then-drain even after a plugin has attached, so
+     * a late-arriving packet can never jump ahead of still-buffered earlier packets.
      *
      * Message shape: `{"type":<type>, ...fields}`. Keys are stable; new event types can
      * be added without breaking existing ones because the plugin ignores unknowns.
@@ -352,9 +397,80 @@ class Interfaces(
      * the plugin can use any JSON library.
      */
     private fun forwardCustomInterface(type: String, fields: Map<String, Any?>): Boolean {
-        val channel = voidburnChannel() ?: return false
-        channel.send(VoidburnPluginJson.encode(type, fields))
+        val encoded = VoidburnPluginJson.encode(type, fields)
+        // UTF-8 byte count matches the wire encoding; see ReplayEntry docstring.
+        val encodedBytes = encoded.toByteArray(Charsets.UTF_8).size
+        if (replayBufferBytes + encodedBytes > MAX_REPLAY_BUFFER_BYTES) {
+            // Drop-newest overflow: preserves the earlier widget_set_root and
+            // widget_open that the plugin needs to establish its state machine.
+            // Dropping oldest instead would leave later set_text updates land
+            // for a group the plugin never heard of. A subsequent smaller
+            // packet that DOES fit in remaining capacity is still accepted —
+            // the policy is "reject when this specific packet would bust the
+            // cap", not "reject everything after any one rejection."
+            if (!replayBufferOverflowLogged) {
+                log.warning("voidburn-plugin replay buffer full (${replayBufferBytes}B of " +
+                    "${MAX_REPLAY_BUFFER_BYTES}B); dropping newest custom-interface packet '$type' " +
+                    "(${encodedBytes}B). This usually means the plugin hasn't attached and the " +
+                    "server is sending a lot of custom interfaces. Further drops suppressed until " +
+                    "a drain clears the buffer.")
+                replayBufferOverflowLogged = true
+            }
+            return false
+        }
+        replayBuffer.addLast(ReplayEntry(encoded, encodedBytes))
+        replayBufferBytes += encodedBytes
+        drainReplayBuffer()
         return true
+    }
+
+    /**
+     * Drain the replay buffer to the attached plugin channel, in FIFO order.
+     * No-op when no channel is attached. Session-thread only.
+     *
+     * Called from {@link #forwardCustomInterface} on every packet (so a
+     * steady-state attached plugin sees the packet immediately) and from
+     * {@link #onPluginChannelAttached} on the first tick after the plugin
+     * attaches (so the pre-attach buffer is flushed). Both call sites run
+     * on the session executor, so the buffer never needs external
+     * synchronization.
+     */
+    private fun drainReplayBuffer() {
+        val channel = voidburnChannel() ?: return
+        while (replayBuffer.isNotEmpty()) {
+            val next = replayBuffer.removeFirst()
+            replayBufferBytes -= next.bytes
+            // Best-effort send per VoidburnPluginChannel's contract. A closed
+            // channel just silently discards; a future retry on reconnect would
+            // need the plugin to request a fresh state, which is out of scope
+            // for this buffer.
+            channel.send(next.json)
+        }
+        replayBufferOverflowLogged = false
+    }
+
+    /**
+     * Signal from GatewaySession that a plugin has just attached and its
+     * channel is live. Marshals to the session executor at the call site so
+     * this method only runs on the session thread.
+     *
+     * Idempotent: if the buffer is empty (plugin attached before any custom
+     * interface packets arrived) this is a cheap no-op.
+     */
+    fun onPluginChannelAttached() {
+        drainReplayBuffer()
+    }
+
+    /**
+     * Drop any buffered custom-interface packets. Called from GatewaySession
+     * when the session is closing — the player is leaving, so retaining the
+     * buffer to replay to a future reconnection is meaningless (that would
+     * be a different session with its own fresh state anyway).
+     */
+    fun clearReplayBuffer() {
+        replayBuffer.clear()
+        replayBufferBytes = 0
+        replayBufferOverflowLogged = false
     }
 
     private fun Int.signed16() = if (this == 0xFFFF) -1 else this
@@ -371,6 +487,18 @@ class Interfaces(
         /** Each gameframe root's layout, as script 3998 takes it. */
         val WINDOW_MODE_LAYOUT = mapOf(548 to 0, 161 to 1, 164 to 2)
         const val CUSTOM_INTERFACE_START = 30_000
+
+        /**
+         * Upper bound on the pre-attach replay buffer size in characters of
+         * encoded JSON. 64 KiB is ~30x the size of the shipped MOTD payload
+         * (root + open + ~10 text updates ≈ 2 KiB) so the typical session
+         * never comes close. A session that keeps buffering past this bound
+         * is in pathological territory (plugin never attaches, server
+         * flooding custom interfaces); the overflow drops newest packets
+         * so the earlier widget_set_root / widget_open the plugin needs
+         * to establish state stay intact.
+         */
+        const val MAX_REPLAY_BUFFER_BYTES = 64 * 1024
         const val ARG_STRING = 0
         const val ARG_LONG = 2
         const val OLD_OP_BITS = 0x3FF

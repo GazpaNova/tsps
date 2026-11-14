@@ -164,13 +164,15 @@ object TspsClientPacket {
      * A separate gateway phase buffers those packets per session while the
      * channel is null and replays them in order once the plugin attaches.
      *
-     * Non-plugin-capable RuneLite caveat: a vanilla RuneLite that somehow reaches
-     * this gateway (direct connect, RSProx) will have the bit advertised on its
-     * behalf and will receive MOTD packets it cannot render. Today it sees
-     * nothing (packets drop); after the late-attach replay lands, the packets
-     * stay buffered until the session ends. Either way, the practical answer is
-     * "install the Voidburn plugin" — mixed-client RuneLite deployment through
-     * this gateway is not a supported configuration.
+     * Non-plugin-capable RuneLite caveat (when opted in): a vanilla RuneLite
+     * that somehow reaches an opted-in gateway (direct connect, RSProx) will
+     * have the bit advertised on its behalf and will receive MOTD packets it
+     * cannot render. With the replay buffer in place those packets stay buffered
+     * until the session ends and the player sees nothing. Either way, the
+     * practical answer is "install the Voidburn plugin" — mixed-client RuneLite
+     * deployment through an opted-in gateway is not a supported configuration.
+     * Default-off deployments do NOT advertise on behalf of these clients; they
+     * continue to get the stock 378 welcome.
      */
     const val CAPABILITY_VOIDBURN_PLUGIN = 0x2
 

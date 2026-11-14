@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
  *
  *   byte 0        = opcode (HANDSHAKE)
  *   byte 1        = body length (payload bytes that follow)
- *   bytes 2..n-2  = username (ISO_8859_1 + trailing NUL)
+ *   bytes 2..n-4  = username (ISO_8859_1 + trailing NUL)
  *   byte n-3      = 0 (no appearance block)
  *   byte n-2      = CLIENT_TYPE_DESKTOP (= 0)
  *   byte n-1      = capability byte = CAPABILITY_NATIVE_CLIENT OR extraCapabilities
