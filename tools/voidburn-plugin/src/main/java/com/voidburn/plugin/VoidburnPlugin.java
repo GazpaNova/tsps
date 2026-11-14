@@ -4,8 +4,13 @@ import com.google.inject.Provides;
 import java.awt.event.MouseEvent;
 import java.util.Optional;
 import javax.inject.Inject;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.MenuAction;
+import net.runelite.api.Player;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.OverlayMenuClicked;
@@ -51,6 +56,9 @@ public class VoidburnPlugin extends Plugin {
 
     @Inject
     private MouseManager mouseManager;
+
+    @Inject
+    private ConfigManager configManager;
 
     /**
      * Live view of what custom interfaces are open on this session. Written from the
@@ -112,12 +120,94 @@ public class VoidburnPlugin extends Plugin {
     @Subscribe
     public void onConfigChanged(ConfigChanged event) {
         if (!VoidburnConfig.GROUP.equals(event.getGroup())) return;
-        // Any config edit (URL, username, token) warrants a reconnect. The
-        // gateway side can't be live-rebound either — the new token is a
-        // new session's mint, and a new username is a different attach.
+        // Any connection-shaping edit (URL, username, token) warrants a
+        // reconnect. The gateway side can't be live-rebound either — the
+        // new token is a new session's mint, and a new username is a
+        // different attach. The autoPair toggle itself only changes
+        // whether future auto-captures write to config; no reconnect is
+        // needed for that edit.
+        if (VoidburnConfig.KEY_AUTO_PAIR.equals(event.getKey())) {
+            log.debug("Voidburn plugin: autoPair toggled to {}", event.getNewValue());
+            return;
+        }
         log.info("Voidburn plugin: config changed ({}) — reconnecting", event.getKey());
         closeConnection();
         openConnection();
+    }
+
+    /**
+     * Auto-pair, step 1: on game login, fill the username from the client
+     * if the player hasn't set it. The player's display name only
+     * becomes available on LOGGED_IN, not on earlier states —
+     * Client.getLocalPlayer() returns null before login.
+     *
+     * Liveness: if getLocalPlayer() is not yet populated when this event
+     * fires (RuneLite's deferred-init ordering can race the first
+     * LOGGED_IN with Client.getLocalPlayer()'s own first non-null
+     * publication), the capture is NOT one-shot. tryFillUsername() is
+     * also called from onChatMessage, so when the token arrives (which
+     * the gateway always sends after login completes, by which time the
+     * local player is populated), the plugin has another shot at
+     * filling the username. v1 review P2 regression.
+     */
+    @Subscribe
+    public void onGameStateChanged(GameStateChanged event) {
+        if (event.getGameState() != GameState.LOGGED_IN) return;
+        tryFillUsername();
+    }
+
+    /**
+     * Try to write the username config key from the logged-in player's
+     * name. Idempotent: no-op when autoPair is off, when the client has
+     * no local player yet, when the name is invalid, or when the config
+     * already holds that name. Safe to call from both the LOGGED_IN
+     * handler and the chat-token handler — the next call picks up where
+     * the previous no-op left off.
+     */
+    private void tryFillUsername() {
+        Player local = client.getLocalPlayer();
+        if (local == null) return;
+        Optional<String> name = AutoPair.usernameToWrite(
+            config.autoPair(), local.getName(), config.username());
+        if (name.isEmpty()) return;
+        log.info("Voidburn plugin: auto-pair filling username from logged-in player");
+        configManager.setConfiguration(VoidburnConfig.GROUP, VoidburnConfig.KEY_USERNAME, name.get());
+    }
+
+    /**
+     * Auto-pair, step 2: capture the session token from the gateway's
+     * post-login chat message ("RuneLite plugin token: …"). Only acts
+     * on GAMEMESSAGE events (the type the gateway uses); other chat
+     * sources don't match, so a player typing the prefix by hand into
+     * a public channel can't poison the config.
+     *
+     * Also catches a deferred-username case: the gateway always sends
+     * the token line after login has fully completed, so by the time
+     * we see it, Client.getLocalPlayer() is reliably populated. A
+     * tryFillUsername() call here recovers from a null-getLocalPlayer
+     * race at LOGGED_IN. The two writes are independent
+     * ConfigManager.setConfiguration calls and the
+     * {@link #onConfigChanged} subscriber reconnects for each; the
+     * gateway's attach reads both values from a single config read, so
+     * ordering them within the same tick is fine.
+     *
+     * The write triggers the usual reconnect via onConfigChanged, and
+     * the attach then authenticates against the fresh mint the gateway
+     * holds for this session.
+     */
+    @Subscribe
+    public void onChatMessage(ChatMessage event) {
+        if (event.getType() != ChatMessageType.GAMEMESSAGE) return;
+        Optional<String> token = AutoPair.tokenToWrite(
+            config.autoPair(), event.getMessage(), config.token());
+        if (token.isEmpty()) return;
+        // Recover a username that the LOGGED_IN handler couldn't capture
+        // because getLocalPlayer was still null at that event (v1 review
+        // P2). The token always arrives post-login, so by now the Client
+        // has a local player.
+        tryFillUsername();
+        log.info("Voidburn plugin: auto-pair captured session token from chat");
+        configManager.setConfiguration(VoidburnConfig.GROUP, VoidburnConfig.KEY_TOKEN, token.get());
     }
 
     private void openConnection() {
