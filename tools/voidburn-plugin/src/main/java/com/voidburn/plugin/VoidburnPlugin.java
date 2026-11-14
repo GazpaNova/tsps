@@ -63,6 +63,7 @@ public class VoidburnPlugin extends Plugin {
     private MotdOverlay motdOverlay;
     private PluginConnection connection;
     private MouseAdapter mouseListener;
+    private final UrlOpener urlOpener = new UrlOpener();
 
     @Provides
     VoidburnConfig provideConfig(ConfigManager configManager) {
@@ -226,15 +227,30 @@ public class VoidburnPlugin extends Plugin {
         }
 
         private void dispatchClick(MotdOverlay.HitRegion region) {
+            // Switch on the action variant — Play goes upstream to the
+            // gateway, URL opens locally in the player's browser. Only
+            // the upstream path dismisses the overlay (the server's
+            // widget_set_root follows). A URL click leaves the overlay
+            // alone so the player can click a different URL without
+            // retriggering the welcome screen.
+            MotdOverlay.HitAction action = region.action();
+            if (action instanceof MotdOverlay.HitAction.Click click) {
+                dispatchServerClick(click);
+            } else if (action instanceof MotdOverlay.HitAction.OpenUrl openUrl) {
+                dispatchUrlOpen(openUrl);
+            }
+        }
+
+        private void dispatchServerClick(MotdOverlay.HitAction.Click click) {
             PluginConnection c = connection;
             if (c == null) {
-                log.debug("Voidburn plugin: click on widget {} dropped — no connection", region.widgetUid());
+                log.debug("Voidburn plugin: click on widget {} dropped — no connection", click.widgetUid());
                 return;
             }
-            String frame = ClickFrame.build(region.widgetUid(), region.op());
+            String frame = ClickFrame.build(click.widgetUid(), click.op());
             boolean sent = c.send(frame);
             if (!sent) {
-                log.debug("Voidburn plugin: click on widget {} dropped — connection not ready", region.widgetUid());
+                log.debug("Voidburn plugin: click on widget {} dropped — connection not ready", click.widgetUid());
                 return;
             }
             // The server's widget_set_root follows on the back of this
@@ -244,6 +260,17 @@ public class VoidburnPlugin extends Plugin {
             // (new login / config change), so re-opening the plugin after
             // a Play click still shows MOTD if the server reopens it.
             motdOverlay.dismiss();
+        }
+
+        private void dispatchUrlOpen(MotdOverlay.HitAction.OpenUrl openUrl) {
+            boolean opened = urlOpener.open(openUrl.url());
+            if (!opened) {
+                log.info("Voidburn plugin: could not open URL {}", openUrl.url());
+            }
+            // URL click does NOT dismiss the overlay — same behaviour as
+            // the TypeScript client's CustomInterfaceRuntime: open the
+            // URL and leave the welcome screen up so the player can
+            // click another URL or the Play button.
         }
     }
 }

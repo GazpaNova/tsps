@@ -7,7 +7,6 @@ import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -75,6 +74,21 @@ public class MotdOverlay extends Overlay {
     private static final int PLAY_BUTTON_UID =
         (MotdPresentation.MOTD_GROUP_ID << 16) | PLAY_BUTTON_COMPONENT_ID;
 
+    /**
+     * Footer URL layout pinned to Layout.MotdInterface.js:
+     *   - panel-local x=16, width=URL_W (panel.width - 32 - PLAY_W - 8 = 280)
+     *   - y-coordinates 398 / 414 / 430, each 14 tall
+     *
+     * The three ids match MotdPresentation.FOOTER_*_LABEL exactly so the
+     * hit test can look the URL up via MotdPresentation.
+     */
+    private static final int URL_FOOTER_X = 16;
+    private static final int URL_FOOTER_WIDTH = PANEL_WIDTH - 32 - PLAY_BUTTON_WIDTH - 8;
+    private static final int URL_FOOTER_HEIGHT = 14;
+    private static final int URL_FOOTER_DISCORD_Y = 398;
+    private static final int URL_FOOTER_GITHUB_Y = 414;
+    private static final int URL_FOOTER_LAUNCHER_Y = 430;
+
     /** Voidburn purple for the Play button fill; gold for its label. */
     private static final Color PLAY_BUTTON_FILL = new Color(0x6b, 0x16, 0xe8, 160);
     private static final Color PLAY_BUTTON_BORDER = new Color(0xd4, 0xb8, 0x1b);
@@ -88,26 +102,49 @@ public class MotdOverlay extends Overlay {
     private final AtomicBoolean dismissed = new AtomicBoolean(false);
 
     /**
-     * Hit regions published by the most recent {@link #render} on the client
-     * thread, read by the AWT event thread from {@link #hitTest}. Volatile
-     * reference + immutable {@link List#copyOf} snapshot = a reader always
-     * sees either the previous render's regions or the new render's
-     * regions, never a half-constructed list.
+     * Viewport size recorded by the most recent {@link #render}. Read by
+     * the AWT event thread from {@link #hitTest} to recompute regions
+     * against the LIVE {@link InterfaceState} / {@link MotdPresentation},
+     * so a hit never fires against a region that no longer exists
+     * (component hidden since last render, text rewritten, overlay
+     * dismissed, root swapped).
      *
-     * Empty when the overlay isn't currently showing (render() short-circuits
-     * before publishing regions in that case) or when no clickable widget
-     * was drawn this frame.
+     * Volatile reference to an immutable {@link Dimension}; null until
+     * the first render.
      */
-    private volatile List<HitRegion> hitRegions = Collections.emptyList();
+    private volatile Dimension lastViewport = null;
 
     /**
-     * A screen-space rectangle attached to a server component. On a mouse
-     * click inside {@link #bounds}, the plugin sends a click frame carrying
-     * {@link #widgetUid} and {@link #op} upstream.
+     * A screen-space rectangle attached to an action. The action decides
+     * what the mouse listener does on a hit: {@link HitAction.Click} sends
+     * an upstream click frame (the Play button), {@link HitAction.OpenUrl}
+     * opens the URL in the player's browser (the three footer labels —
+     * same behaviour as the TypeScript client's CustomInterfaceRuntime,
+     * no server round-trip).
      */
-    public record HitRegion(Rectangle bounds, int widgetUid, int op) {
+    public record HitRegion(Rectangle bounds, HitAction action) {
         public HitRegion {
             Objects.requireNonNull(bounds, "bounds");
+            Objects.requireNonNull(action, "action");
+        }
+    }
+
+    /**
+     * What the mouse listener does when a hit region is clicked. A sealed
+     * interface keeps the dispatch branches structural rather than
+     * nullable-field switches: a {@code Click} carries exactly the ids
+     * {@link ClickFrame} needs, an {@code OpenUrl} carries exactly the
+     * URL {@link UrlOpener} needs.
+     */
+    public sealed interface HitAction permits HitAction.Click, HitAction.OpenUrl {
+        /** Send a plugin → gateway click frame (goes to tsps for the Play button). */
+        record Click(int widgetUid, int op) implements HitAction {}
+
+        /** Open this URL in the player's browser (handled client-side on the plugin). */
+        record OpenUrl(String url) implements HitAction {
+            public OpenUrl {
+                Objects.requireNonNull(url, "url");
+            }
         }
     }
 
@@ -139,21 +176,18 @@ public class MotdOverlay extends Overlay {
      */
     public void dismiss() {
         dismissed.set(true);
-        // Clear published hit regions immediately so a second click that
-        // arrives before the next render can't re-activate the retired
-        // button. hitTest also guards on isShowing() — belt and suspenders,
-        // but both paths independently cover the "state change outruns the
-        // next render" window.
-        hitRegions = Collections.emptyList();
+        // isShowing() returns false immediately; hitTest honours that on
+        // its next call. No cached regions to clear in v2's rebuild-on-
+        // demand model.
     }
 
     /** Re-arm MOTD display — called when a new connection starts. */
     public void reset() {
         dismissed.set(false);
-        // Same reasoning as dismiss(): the previous session's regions must
-        // not survive into the new one. The next render will re-publish for
-        // the fresh session once a widget_set_root lands.
-        hitRegions = Collections.emptyList();
+        // Viewport snapshot is cleared so a hit before the first post-reset
+        // render has no size to recompute against, which keeps the
+        // transition symmetric even though isShowing() would also refuse.
+        lastViewport = null;
     }
 
     /**
@@ -185,17 +219,18 @@ public class MotdOverlay extends Overlay {
     @Override
     public Dimension render(Graphics2D g) {
         if (!isShowing()) {
-            hitRegions = Collections.emptyList();
+            lastViewport = null;
             return null;
         }
         Optional<MotdPresentation> maybe = stateSupplier.get().flatMap(MotdPresentation::from);
         if (maybe.isEmpty()) {
-            hitRegions = Collections.emptyList();
+            lastViewport = null;
             return null;
         }
         MotdPresentation p = maybe.get();
 
         Rectangle bounds = client.getCanvas().getBounds();
+        lastViewport = new Dimension(bounds.width, bounds.height);
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 
@@ -229,50 +264,101 @@ public class MotdOverlay extends Overlay {
             }
             y += 8;
         }
-        // Footer: three URLs on their own lines.
-        int footerY = py + ph - PANEL_PADDING - 3 * 14;
-        y = Math.max(y, footerY);
-        y = drawLine(g, p.footer().discord(), contentX, y, contentW, MUTED_COLOR, 11, false);
-        y = drawLine(g, p.footer().github(), contentX, y, contentW, MUTED_COLOR, 11, false);
-        drawLine(g, p.footer().launcher(), contentX, y, contentW, MUTED_COLOR, 11, false);
+        // Footer URLs: draw at the EXACT panel-relative coordinates
+        // computeHitRegions uses for the hit rectangles (x=16, width=
+        // URL_FOOTER_WIDTH, fixed rows at y=398/414/430 inside the panel,
+        // height 14). Clipped to the URL region so a long label can't
+        // stretch into the Play button's column. v1 drew via drawLine
+        // with contentX/contentW and row spacing from FontMetrics, so
+        // the painted lines did not match the hit rectangles — v1
+        // review P2.
+        drawFooterUrl(g, px, py, URL_FOOTER_DISCORD_Y, p.footer().discord());
+        drawFooterUrl(g, px, py, URL_FOOTER_GITHUB_Y, p.footer().github());
+        drawFooterUrl(g, px, py, URL_FOOTER_LAUNCHER_Y, p.footer().launcher());
 
         // Play button. Drawing uses the same coordinates computeHitRegions
         // reports, so what gets painted is exactly what will be clickable.
-        List<HitRegion> regions = computeHitRegions(bounds.width, bounds.height);
+        List<HitRegion> regions = computeHitRegions(bounds.width, bounds.height, p);
         for (HitRegion region : regions) {
-            if (region.widgetUid() == PLAY_BUTTON_UID) {
+            if (region.action() instanceof HitAction.Click click
+                    && click.widgetUid() == PLAY_BUTTON_UID) {
                 Rectangle b = region.bounds();
                 drawPlayButton(g, b.x, b.y);
             }
         }
-        hitRegions = regions;
 
         return new Dimension(bounds.width, bounds.height);
     }
 
     /**
+     * Draw one footer URL label at its fixed panel-relative row, clipped
+     * to the URL region's width. Matches the hit rectangle byte-for-byte
+     * so a click on the painted text always lands on the region and
+     * vice-versa.
+     */
+    private void drawFooterUrl(Graphics2D g, int px, int py,
+                               int footerYInPanel, String label) {
+        if (label == null || label.isEmpty()) return;
+        g.setFont(g.getFont().deriveFont(java.awt.Font.PLAIN, 11f));
+        g.setColor(MUTED_COLOR);
+        FontMetrics fm = g.getFontMetrics();
+        String clipped = clip(label, fm, URL_FOOTER_WIDTH);
+        // Vertically center the ascender inside the fixed-height row so
+        // the text sits where a reader expects it rather than stacking
+        // the baseline at the row top.
+        int baselineY = py + footerYInPanel + fm.getAscent()
+            + (URL_FOOTER_HEIGHT - fm.getHeight()) / 2;
+        g.drawString(clipped, px + URL_FOOTER_X, baselineY);
+    }
+
+    /**
      * Compute the clickable hit regions for a viewport of the given size.
      * Pure function — called from {@link #render} on the client thread and
-     * directly from unit tests that reason about geometry without a
-     * {@link Graphics2D}.
+     * directly from unit tests.
      *
      * The panel is centered on the viewport using the same math {@link #render}
      * uses; the Play button is anchored to the panel's top-left exactly as
-     * {@code Layout.MotdInterface.js} declares (panel-space
-     * x = {@value #PANEL_WIDTH} - {@value #PLAY_BUTTON_WIDTH} -
-     * {@value #PLAY_BUTTON_RIGHT_PADDING},
-     * y = {@value #PLAY_BUTTON_Y_FROM_PANEL_TOP}).
+     * {@code Layout.MotdInterface.js} declares. URL footer regions are
+     * attached to the server-provided label text via
+     * {@link UrlOpener#extract}: a footer label with no parseable URL
+     * yields no hit region (so a click lands on nothing until the server
+     * text catches up).
      */
-    static List<HitRegion> computeHitRegions(int viewportWidth, int viewportHeight) {
+    static List<HitRegion> computeHitRegions(int viewportWidth, int viewportHeight,
+                                             MotdPresentation presentation) {
         int px = Math.max(0, (viewportWidth - PANEL_WIDTH) / 2);
         int py = Math.max(0, (viewportHeight - PANEL_HEIGHT) / 2);
         int pw = Math.min(PANEL_WIDTH, viewportWidth);
+
+        List<HitRegion> out = new ArrayList<>(4);
+
+        // Play button.
         int playX = px + pw - PLAY_BUTTON_WIDTH - PLAY_BUTTON_RIGHT_PADDING;
         int playY = py + PLAY_BUTTON_Y_FROM_PANEL_TOP;
-        return List.of(new HitRegion(
+        out.add(new HitRegion(
             new Rectangle(playX, playY, PLAY_BUTTON_WIDTH, PLAY_BUTTON_HEIGHT),
-            PLAY_BUTTON_UID,
-            PLAY_BUTTON_OP));
+            new HitAction.Click(PLAY_BUTTON_UID, PLAY_BUTTON_OP)));
+
+        // URL footers. Each footer is only clickable when the server has
+        // delivered a label that contains a parseable URL — otherwise the
+        // click should have no effect (the label is empty or in some
+        // intermediate pre-sendString state).
+        addUrlRegion(out, px, py, URL_FOOTER_DISCORD_Y, presentation.footer().discord());
+        addUrlRegion(out, px, py, URL_FOOTER_GITHUB_Y, presentation.footer().github());
+        addUrlRegion(out, px, py, URL_FOOTER_LAUNCHER_Y, presentation.footer().launcher());
+
+        return List.copyOf(out);
+    }
+
+    private static void addUrlRegion(List<HitRegion> out, int px, int py,
+                                     int footerYInPanel, String label) {
+        Optional<String> url = UrlOpener.extract(label);
+        if (url.isEmpty()) return;
+        out.add(new HitRegion(
+            new Rectangle(
+                px + URL_FOOTER_X, py + footerYInPanel,
+                URL_FOOTER_WIDTH, URL_FOOTER_HEIGHT),
+            new HitAction.OpenUrl(url.get())));
     }
 
     /**
@@ -295,23 +381,32 @@ public class MotdOverlay extends Overlay {
     }
 
     /**
-     * Hit-test an AWT canvas-space click against the currently published
-     * regions. Returns the matching region on a hit, or empty when the
-     * point is outside every clickable area. Safe to call from the AWT
-     * event thread.
+     * Hit-test an AWT canvas-space click. Returns the matching region on
+     * a hit, or empty when the point is outside every clickable area.
+     * Safe to call from the AWT event thread.
      *
-     * Visibility gate: hit-testing always consults {@link #isShowing}
-     * first. The published regions snapshot only refreshes at render
-     * cadence, so a state change that flips the overlay off (local
-     * dismiss, a server-driven root swap to a different group, or a
-     * connection reset) must deactivate regions immediately rather than
-     * wait for the next render. Otherwise a second click arriving in
-     * that window double-sends, and a click after a root swap sends to
-     * a no-longer-visible interface (v1 review P2).
+     * Rebuild-on-demand: unlike v1/v2 which cached regions published by
+     * render, this reads the CURRENT {@link InterfaceState} (via the
+     * state supplier) and recomputes regions against the last viewport
+     * seen by render. That makes the test fresh against per-component
+     * state too — if {@code widget_set_hidden} retired a URL label since
+     * the last render, {@link MotdPresentation#from} projects it to the
+     * empty string, {@link UrlOpener#extract} returns empty, and that
+     * URL region vanishes immediately. v1 review P2 was that OpenUrl
+     * actions captured at render time could outlive the component they
+     * came from until the next render.
+     *
+     * Visibility gate: {@link #isShowing} and a known viewport are both
+     * required. Dismissal, root swap, session reset, and
+     * pre-first-render all short-circuit to empty.
      */
     public Optional<HitRegion> hitTest(int x, int y) {
         if (!isShowing()) return Optional.empty();
-        for (HitRegion region : hitRegions) {
+        Dimension viewport = lastViewport;
+        if (viewport == null) return Optional.empty();
+        Optional<MotdPresentation> maybe = stateSupplier.get().flatMap(MotdPresentation::from);
+        if (maybe.isEmpty()) return Optional.empty();
+        for (HitRegion region : computeHitRegions(viewport.width, viewport.height, maybe.get())) {
             if (region.bounds().contains(x, y)) {
                 return Optional.of(region);
             }
