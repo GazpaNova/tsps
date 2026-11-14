@@ -141,17 +141,36 @@ object TspsClientPacket {
     const val CAPABILITY_NATIVE_CLIENT = 0x1
 
     /**
-     * `HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN` in ClientProtocol.ts. Set by the Voidburn
-     * RuneLite plugin at login time to tell tsps that server-defined custom interfaces
-     * (group id >= 30000) can be rendered on this session. Without the bit, tsps
-     * routes those sessions to the stock welcome flow instead of the MOTD — the
-     * production activation gate for `WelcomeScreen:deferToMotd`.
+     * `HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN` in ClientProtocol.ts. Tells tsps that
+     * server-defined custom interfaces (group id >= 30000) can be rendered on this
+     * session. Without the bit, tsps routes native sessions to the stock welcome
+     * flow instead of the MOTD — this is the production activation gate for
+     * `WelcomeScreen:deferToMotd`.
      *
-     * The gateway does not set this bit on its own: the Voidburn RuneLite plugin
-     * is a separate piece that injects the capability when present. Vanilla RuneLite
-     * and RSProx sessions therefore reach tsps without the bit, and tsps keeps them
-     * on the stock 378 welcome screen. This leaves the bit reserved and documented
-     * here so both sides use the same number when the plugin ships.
+     * Deployment contract: the gateway offers a per-deployment opt-in flag
+     * (`GatewayConfig.advertiseVoidburnPluginCapability`, default false)
+     * that controls whether the handshake advertises this bit. Enable it
+     * on a Voidburn-dedicated gateway where all RuneLite users run the
+     * Voidburn plugin; the server's MOTD plugin then becomes eligible for
+     * every native session the gateway handles. Default-off preserves the
+     * stock capability-aware fallback (native sessions see 378 unless
+     * their RuneLite advertises the bit itself — which no current build
+     * does, since the plugin attaches via its own WebSocket after login).
+     *
+     * Companion gateway work still needed: the plugin WebSocket attaches a few
+     * seconds after login (player sees the gateway's token chat message, plugin
+     * reads it and reconnects). Any custom-interface packets the server sends
+     * during that gap are dropped by `Interfaces.forwardCustomInterface` today.
+     * A separate gateway phase buffers those packets per session while the
+     * channel is null and replays them in order once the plugin attaches.
+     *
+     * Non-plugin-capable RuneLite caveat: a vanilla RuneLite that somehow reaches
+     * this gateway (direct connect, RSProx) will have the bit advertised on its
+     * behalf and will receive MOTD packets it cannot render. Today it sees
+     * nothing (packets drop); after the late-attach replay lands, the packets
+     * stay buffered until the session ends. Either way, the practical answer is
+     * "install the Voidburn plugin" — mixed-client RuneLite deployment through
+     * this gateway is not a supported configuration.
      */
     const val CAPABILITY_VOIDBURN_PLUGIN = 0x2
 
@@ -169,10 +188,11 @@ object TspsClientPacket {
     /**
      * Send tsps the handshake for this RuneLite session.
      *
-     * `extraCapabilities` is OR'd with `CAPABILITY_NATIVE_CLIENT`. The gateway passes
-     * `0` by default; the Voidburn RuneLite plugin passes `CAPABILITY_VOIDBURN_PLUGIN`
-     * through this parameter once it is built so tsps's MOTD plugin becomes eligible
-     * for this session.
+     * `extraCapabilities` is OR'd with `CAPABILITY_NATIVE_CLIENT`.
+     * `GatewaySession` passes `CAPABILITY_VOIDBURN_PLUGIN` when the
+     * `advertiseVoidburnPluginCapability` deployment flag is on, otherwise
+     * 0. See that constant's docstring for the deployment contract. The
+     * parameter remains an Int so future capabilities compose by OR'ing.
      */
     fun handshake(username: String, extraCapabilities: Int = 0): ByteArray =
         TspsWriter()

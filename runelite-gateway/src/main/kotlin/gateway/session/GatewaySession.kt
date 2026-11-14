@@ -194,7 +194,10 @@ class GatewaySession(
                     fail(LoginResponse.LoginServerOffline)
                     return@run
                 }
-                tsps.send(TspsClientPacket.handshake(pending.username))
+                tsps.send(TspsClientPacket.handshake(
+                    pending.username,
+                    extraCapabilities = voidburnHandshakeCapabilities(),
+                ))
             }
             if (!queued) pending.close()
             return
@@ -261,8 +264,14 @@ class GatewaySession(
             return
         }
         state = State.ENTERING
-        tsps.send(TspsClientPacket.handshake(block.username))
+        tsps.send(TspsClientPacket.handshake(
+            block.username,
+            extraCapabilities = voidburnHandshakeCapabilities(),
+        ))
     }
+
+    private fun voidburnHandshakeCapabilities(): Int =
+        computeHandshakeCapabilities(context.config)
 
     private fun onHandshake(handshake: TspsHandshake) {
         this.handshake = handshake
@@ -740,3 +749,25 @@ class GatewaySession(
         const val FOLLOW_OP = 3
     }
 }
+
+/**
+ * Compute the extraCapabilities int for the next tsps handshake. Both
+ * handshake call sites in GatewaySession use this so the capability byte
+ * can never drift between initial login and re-login/resume paths.
+ *
+ * Advertising is strictly opt-in via
+ * [gateway.config.GatewayConfig.advertiseVoidburnPluginCapability]
+ * (default false). When disabled, this returns 0 and tsps's capability-
+ * aware fallback keeps native sessions on the stock 378 welcome flow.
+ * When enabled, tsps's MOTD plugin becomes eligible for every native
+ * session this gateway handles — see the config field's docstring for
+ * the deployment contract.
+ *
+ * Package-scoped free function so it is unit-testable without
+ * constructing a full GatewaySession.
+ */
+internal fun computeHandshakeCapabilities(config: gateway.config.GatewayConfig): Int =
+    if (config.advertiseVoidburnPluginCapability)
+        gateway.tsps.TspsClientPacket.CAPABILITY_VOIDBURN_PLUGIN
+    else
+        0

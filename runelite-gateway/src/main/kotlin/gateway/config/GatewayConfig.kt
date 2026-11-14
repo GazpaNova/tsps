@@ -25,7 +25,35 @@ data class GatewayConfig(
     val loginUtilitiesPort: Int = 0,
     val loginUtilitiesTrustLoopbackProxy: Boolean = false,
     val voidburnPluginPort: Int = 0,
+    /**
+     * Whether to advertise HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN on every outbound
+     * tsps handshake. Default false preserves the stock capability-aware fallback
+     * (tsps routes native sessions to the 378 welcome screen); set true on a
+     * Voidburn-dedicated gateway where all RuneLite users are expected to run
+     * the Voidburn plugin so that tsps's MOTD plugin becomes eligible for every
+     * session this gateway handles.
+     *
+     * This is a per-DEPLOYMENT setting, not per-client detection. A vanilla
+     * RuneLite reaching an opted-in gateway (direct connect, RSProx) will still
+     * have the capability advertised on its behalf and will receive MOTD
+     * packets it cannot render. Enable this flag only when the launcher/plugin
+     * distribution and late-attach replay ship together.
+     *
+     * Also requires `voidburnPluginPort` to be a non-zero port: the listener
+     * must be running to receive the plugin WebSocket attach that forwards
+     * MOTD state to the player. Enabling advertisement without the listener is
+     * a configuration error; `load` fails fast in that case.
+     */
+    val advertiseVoidburnPluginCapability: Boolean = false,
 ) {
+    init {
+        require(!advertiseVoidburnPluginCapability || voidburnPluginPort > 0) {
+            "ADVERTISE_VOIDBURN_PLUGIN_CAPABILITY requires VOIDBURN_PLUGIN_PORT to be set — " +
+                "advertising the capability without a running plugin listener leaves RuneLite " +
+                "sessions unable to render the MOTD the server will send them."
+        }
+    }
+
     val tspsUrl: String get() = "ws://127.0.0.1:$websocketPort/"
 
     companion object {
@@ -50,6 +78,8 @@ data class GatewayConfig(
                 loginUtilitiesPort = (env["GATEWAY_LOGIN_HTTP_PORT"] ?: env["LOGIN_UTILITIES_PORT"])?.toInt() ?: 0,
                 loginUtilitiesTrustLoopbackProxy = (env["GATEWAY_LOGIN_TRUST_LOOPBACK_PROXY"] ?: env["LOGIN_UTILITIES_TRUST_LOOPBACK_PROXY"]) == "true",
                 voidburnPluginPort = env["VOIDBURN_PLUGIN_PORT"]?.toInt() ?: 0,
+                advertiseVoidburnPluginCapability =
+                    env["ADVERTISE_VOIDBURN_PLUGIN_CAPABILITY"]?.toBoolean() ?: false,
             )
         }
 
