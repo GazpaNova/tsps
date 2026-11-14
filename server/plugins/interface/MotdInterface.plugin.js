@@ -40,6 +40,39 @@ const FIRST_OPTION_FLAG = 1 << 1;
 
 const pending = new WeakSet();
 const visible = new WeakSet();
+/**
+ * New accounts whose MOTD has been deferred until their onboarding
+ * cascade finishes. Entries are added at login (isNewAccount=true,
+ * passing eligibility) and removed either when onPlayerProcess fires
+ * MOTD, or when the player disconnects/logs out.
+ *
+ * "Onboarding complete" = NOT in tutorial AND no pending initial
+ * Ironman mode choice AND no modal interface open. See
+ * {@link isOnboardingActive} for the exact definition. The first
+ * server-process tick at which that compound predicate flips to
+ * false fires MOTD. A bare no-modal check is not enough because
+ * Tutorial Island has long-lived non-modal phases between steps;
+ * see the v1 review's regression probe.
+ */
+const deferredForOnboarding = new WeakSet();
+
+/**
+ * Players for whom {@code tutorial:started} has fired and
+ * {@code tutorial:completed} has not. Used by
+ * {@link isOnboardingActive} to keep MOTD off the screen for the
+ * whole tutorial — including its many stretches with no modal
+ * interface up — not just its modal moments.
+ */
+const tutorialActive = new WeakSet();
+
+/**
+ * Player attribute set by the Ironman onboarding plugin while the
+ * initial account-mode choice is pending. We read it here so MOTD
+ * waits for the picker to resolve on the non-tutorial new-account
+ * track, not just for whatever modal it happens to open.
+ */
+const IRONMAN_SETUP_PENDING = "ironman:initial-setup-pending";
+
 let api = null;
 
 /**
@@ -104,11 +137,93 @@ function readFooterLabels() {
 
 function login({ player, isNewAccount }) {
   if (!isMotdEligible(api, { player, isNewAccount })) return;
+  if (isNewAccount) {
+    // Defer MOTD until the new-account onboarding cascade (character
+    // designer, Ironman picker, experience screen, tutorial island)
+    // finishes. The onPlayerProcess tick below watches for the first
+    // idle moment — no interface open — and fires MOTD then. Firing at
+    // login would land MOTD underneath the designer and the player
+    // would never see it. See the deferredForOnboarding docstring for
+    // the per-track flow.
+    deferredForOnboarding.add(player);
+    return;
+  }
   // Add to pending BEFORE queuing the microtask, so a disconnect that arrives first
   // can delete it and showMotd will no-op when the microtask runs. This mirrors the
   // vanilla WelcomeScreen lifecycle that v2 lost.
   pending.add(player);
   queueMicrotask(() => showMotd(player));
+}
+
+/**
+ * Onboarding is "active" for a new-account player until all of these
+ * are true at the same tick:
+ *   - not inside Tutorial Island ({@link tutorialActive} is driven
+ *     by the tutorial plugin's own {@code tutorial:started} and
+ *     {@code tutorial:completed} custom events)
+ *   - the Ironman initial-setup choice is not pending
+ *     ({@link IRONMAN_SETUP_PENDING} attribute cleared by the
+ *     Ironman onboarding plugin once a mode is chosen or skipped)
+ *   - no modal / root interface is currently open
+ *     ({@code getInterfaceId() <= 0}).
+ *
+ * The first two gates are specific onboarding signals; the third is
+ * a conservative catch-all so a future onboarding flow with its own
+ * modal picks up this defer-until-done behaviour without this
+ * plugin needing to know about it.
+ *
+ * v1 review (voidburn-motd-onboarding REVIEW.md P2) called out that
+ * a bare no-modal check fires MOTD mid-tutorial at progress 10,
+ * right after the player closes the experience screen but while
+ * the Gielinor Guide approach is still a tutorial step. The
+ * compound predicate fixes that.
+ */
+function isOnboardingActive(player) {
+  if (tutorialActive.has(player)) return true;
+  if (player.getAttribute?.(IRONMAN_SETUP_PENDING) === true) return true;
+  if (player.getInterfaceId() > 0) return true;
+  return false;
+}
+
+/**
+ * Per-tick check for deferred-MOTD new accounts. Fires MOTD at the
+ * first tick where onboarding is complete.
+ *
+ * Cheap: the WeakSet.has guard short-circuits for every player who
+ * isn't deferred (every returning player and every new player who
+ * has already had MOTD fire), so the per-tick cost is a WeakSet
+ * lookup per logged-in player.
+ *
+ * Eligibility is re-checked here with isNewAccount=false because
+ * the onboarding gate has nothing to do with eligibility anymore —
+ * what mattered at login was that the player qualified; what
+ * matters at fire time is that they still qualify (not in
+ * Wilderness, not a bot, etc.).
+ */
+function checkDeferredOnboarding({ player }) {
+  if (!deferredForOnboarding.has(player)) return;
+  if (isOnboardingActive(player)) return;
+  if (!isMotdEligible(api, { player, isNewAccount: false })) return;
+  // Leave the deferredForOnboarding flag in place until showMotd
+  // actually displays. Another handler in the same process tick can
+  // start onboarding (open a modal, set ironman:initial-setup-pending,
+  // fire tutorial:started) between this check and when the microtask
+  // runs — showMotd's own re-check would then skip the display and
+  // the flag would already have been cleared, so the deferred
+  // welcome would be lost. Keeping the flag means the next idle
+  // tick can retry. v2 review P2 regression.
+  pending.add(player);
+  queueMicrotask(() => showMotd(player));
+}
+
+/** tutorial:started event handler: mark player as mid-tutorial. */
+function tutorialStarted({ player }) {
+  tutorialActive.add(player);
+}
+
+/** tutorial:completed event handler: clear the mid-tutorial flag. */
+function tutorialCompleted({ player }) {
+  tutorialActive.delete(player);
 }
 
 function showMotd(player) {
@@ -118,6 +233,18 @@ function showMotd(player) {
   // this microtask (e.g. teleported into Wilderness) still skips MOTD. The
   // isNewAccount flag only applies at login time, so pass false here.
   if (!isMotdEligible(api, { player, isNewAccount: false })) return;
+  // Compound onboarding re-check for deferred first-login displays.
+  // A handler in the same process tick as checkDeferredOnboarding could
+  // start onboarding (open a modal, set ironman:initial-setup-pending,
+  // fire tutorial:started) between the tick's gate and this microtask.
+  // In that case leave the deferredForOnboarding flag in place and
+  // bail so the next idle tick can retry; losing the flag would retire
+  // the welcome. Returning-player displays aren't in deferredForOnboarding
+  // so this branch is a no-op for them (they never deferred).
+  if (deferredForOnboarding.has(player)) {
+    if (isOnboardingActive(player)) return;
+    deferredForOnboarding.delete(player);
+  }
   visible.add(player);
 
   const sender = player.getPacketSender();
@@ -162,15 +289,24 @@ function play({ player }) {
 
 function clear({ player }) {
   // Cancels any queued microtask (showMotd no-ops when pending.delete fails) and
-  // removes any visibility state. Called on disconnect AND logout.
+  // removes any visibility state. Called on disconnect AND logout. Also drops
+  // the deferred-onboarding flag so a disconnect mid-onboarding doesn't leave
+  // a stale entry that would fire on a future reconnect from a different
+  // Player instance (WeakSet keys by identity, so a reconnection creates a
+  // new Player and is independently reconsidered at login).
   pending.delete(player);
   visible.delete(player);
+  deferredForOnboarding.delete(player);
+  tutorialActive.delete(player);
 }
 
 function registerPlugin(pluginApi) {
   api = pluginApi;
   api.registerCustomInterface(INTERFACE_DEFINITION);
   api.onPlayerLogin(login);
+  api.onPlayerProcess(checkDeferredOnboarding);
+  api.onCustomEvent("tutorial:started", tutorialStarted);
+  api.onCustomEvent("tutorial:completed", tutorialCompleted);
   api.onInterfaceActionButton(PLAY_BUTTON_UID, play);
   api.onPlayerDisconnect(clear);
   api.onPlayerLogout(clear);
@@ -182,5 +318,5 @@ module.exports = {
   description: "Voidburn welcome MOTD at login (opt-in via WelcomeScreen:deferToMotd); content from Motd:* keys in world.local.json.",
   dependsOn: ["Wilderness"],
   register: registerPlugin,
-  _test: { sanitizeTiers, isMotdEligible, pending, visible },
+  _test: { sanitizeTiers, isMotdEligible, pending, visible, deferredForOnboarding, tutorialActive },
 };

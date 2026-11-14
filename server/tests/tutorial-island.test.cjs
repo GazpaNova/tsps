@@ -253,6 +253,14 @@ test("new accounts answer the past-experience screen first; the answer picks the
 });
 
 test("a new account skips the welcome screen, designs its character, then gets the experience screen", async () => {
+  // Path 1 MOTD-after-onboarding contract: new accounts have their
+  // MOTD deferred until the first tick where no onboarding interface
+  // is open. During the window this test covers (login → designer →
+  // experience screen → ...) an interface is always up, so MOTD does
+  // not fire and the original assertion `roots == []` still holds
+  // (vanilla 378 is still skipped, and Voidburn MOTD hasn't fired
+  // yet). See the voidburn-motd.test.cjs suite for the deferred-fire
+  // regression coverage.
   const { player, sent } = tutorialPlayer(undefined, 3094, 3104);
   player.setAttribute(PROGRESS, undefined);
   const roots = [];
@@ -279,7 +287,7 @@ test("a new account skips the welcome screen, designs its character, then gets t
 
   PluginManager.emitPlayerLogin({ player, username: "tutorial", isNewAccount: true });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(roots, [], "no welcome screen (378)");
+  assert.deepEqual(roots, [], "no welcome screen (378) and MOTD still deferred");
   assert.ok(subs.includes(679), "the character design opens");
   assert.equal(interfaceId, 679);
   assert.ok(!sent.messages.some((text) => text.includes("::mm")), "no ::mm hint");
@@ -294,6 +302,7 @@ test("a new account skips the welcome screen, designs its character, then gets t
   assert.equal(interfaceId, 929);
   assert.ok(sent.scripts.some(([id, text]) => id === 1974 && String(text).includes("Past Experience")));
 });
+
 
 test("a newly built chatbox doesn't show the login messages over the step text", () => {
   const ALLOW_MES_OVERLAP = 10690;

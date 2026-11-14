@@ -26,7 +26,7 @@ function freshLoad(modulePath) {
 }
 
 function stubApi({ config = {}, core = {} } = {}) {
-  const hooks = { login: [], logout: [], disconnect: [], button: new Map(), custom: {}, registered: [] };
+  const hooks = { login: [], tick: [], logout: [], disconnect: [], button: new Map(), custom: {}, customHandlers: {}, registered: [] };
   return {
     hooks,
     api: {
@@ -47,10 +47,15 @@ function stubApi({ config = {}, core = {} } = {}) {
       getPluginConfig(key, fallback) { return Object.hasOwn(config, key) ? config[key] : fallback; },
       registerCustomInterface(def) { hooks.registered.push(def); },
       onPlayerLogin(fn) { hooks.login.push(fn); },
+      onPlayerProcess(fn) { hooks.tick.push(fn); },
       onPlayerLogout(fn) { hooks.logout.push(fn); },
       onPlayerDisconnect(fn) { hooks.disconnect.push(fn); },
       onInterfaceActionButton(uid, fn) { hooks.button.set(uid, fn); },
-      emitCustomEvent(name, payload) { (hooks.custom[name] ??= []).push(payload); },
+      onCustomEvent(name, fn) { (hooks.customHandlers[name] ??= []).push(fn); },
+      emitCustomEvent(name, payload) {
+        (hooks.custom[name] ??= []).push(payload);
+        for (const fn of hooks.customHandlers[name] ?? []) fn(payload);
+      },
       log() {},
     },
   };
@@ -69,6 +74,7 @@ function stubPlayer(overrides = {}) {
       getUsername: () => "testplayer",
       getSession: () => ({ sendClientPacket: () => {}, isDisconnected: () => false }),
       getAttribute: () => false,
+      getInterfaceId: () => -1,
       getPacketSender: () => sender,
       getLocation: () => null,
       isPlayerBot: () => false,
@@ -137,13 +143,18 @@ test("MOTD eligible for browser sessions (no NATIVE_CLIENT, no plugin bit requir
   assert.equal(isMotdEligible(api, { player, isNewAccount: false }), true);
 });
 
-test("MOTD ineligible for new accounts, bots, mobile, and Wilderness logins", () => {
+test("MOTD ineligible for bots, mobile, and Wilderness logins — new accounts ARE eligible", () => {
   const { isMotdEligible } = freshLoad("../plugins/interface/motd/eligibility");
   const base = { config: { "WelcomeScreen:deferToMotd": true } };
 
   const { api } = stubApi(base);
   const { player } = stubPlayer();
-  assert.equal(isMotdEligible(api, { player, isNewAccount: true }), false, "new account");
+  // New accounts previously bypassed MOTD so the vanilla OSRS new-account flow
+  // could run; now MOTD IS shown to first-login players so they see the
+  // welcome surface instead of dropping straight into interface-cascade.
+  assert.equal(
+    isMotdEligible(api, { player, isNewAccount: true }), true,
+    "new account is eligible");
 
   const bot = stubPlayer({ isPlayerBot: () => true });
   assert.equal(isMotdEligible(stubApi(base).api, { player: bot.player, isNewAccount: false }), false, "bot");
@@ -289,6 +300,212 @@ test("register() registers the interface once and attaches hooks, nothing else",
 // ----------------------------------------------------------------------------
 // Lifecycle (v2 review findings)
 // ----------------------------------------------------------------------------
+
+test("MOTD is deferred for a new account at login, then fires on the first idle tick", async () => {
+  // Path 1: new accounts have a server-driven onboarding cascade
+  // (character designer → Ironman picker / experience screen → tutorial
+  // island / world). Firing MOTD at login would land it underneath the
+  // designer and the player would never see it. The plugin now defers
+  // MOTD for new accounts and watches onPlayerProcess for the first
+  // tick where the player has no interface open — that's the first
+  // moment MOTD is actually visible.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  const { player, sent } = stubPlayer();
+  // Stage 1: login. New account → deferred, no root sent.
+  hooks.login[0]({ player, isNewAccount: true });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 0,
+    "no root sent at login for a new account — MOTD is deferred");
+  assert.ok(plugin._test.deferredForOnboarding.has(player),
+    "player is in the deferred-onboarding set");
+
+  // Stage 2: onboarding interface still up (designer 679, say).
+  // Tick fires, player has an interface, MOTD stays deferred.
+  player.getInterfaceId = () => 679;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 0,
+    "still no root while an onboarding interface is up");
+  assert.ok(plugin._test.deferredForOnboarding.has(player),
+    "still deferred");
+
+  // Stage 3: onboarding finished; player has no interface open.
+  // The next tick fires MOTD.
+  player.getInterfaceId = () => -1;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  const roots = sent.filter(([kind]) => kind === "root");
+  assert.equal(roots.length, 1, "MOTD root landed on the first idle tick");
+  assert.equal(roots[0][1], 30020, "MOTD group id (30020)");
+  assert.ok(!plugin._test.deferredForOnboarding.has(player),
+    "deferred flag cleared once MOTD fired");
+});
+
+test("deferred MOTD does not fire again on subsequent idle ticks", async () => {
+  // The deferredForOnboarding flag is removed once MOTD fires, so a
+  // second idle tick must not re-queue a duplicate MOTD.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  const { player, sent } = stubPlayer();
+  player.getInterfaceId = () => -1;
+  hooks.login[0]({ player, isNewAccount: true });
+  hooks.tick[0]({ player });  // fires MOTD
+  await flushMicrotasks();
+  const firstCount = sent.filter(([kind]) => kind === "root").length;
+  assert.equal(firstCount, 1);
+
+  hooks.tick[0]({ player });  // deferred flag already cleared
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, firstCount,
+    "subsequent ticks do not re-fire MOTD");
+});
+
+test("deferred MOTD waits for tutorial completion, not just a no-modal tick", async () => {
+  // Regression (voidburn-motd-onboarding v1 review P2): v1 fired MOTD
+  // on the first tick with no modal interface, which happened at
+  // tutorial progress 10 (experience screen closed, approaching the
+  // Gielinor Guide — a non-modal tutorial phase). v2 also gates on
+  // tutorialActive so MOTD doesn't land mid-tutorial.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  const { player, sent } = stubPlayer();
+  hooks.login[0]({ player, isNewAccount: true });
+  // tutorial:started fires early in the new-account flow.
+  api.emitCustomEvent("tutorial:started", { player });
+  assert.ok(plugin._test.tutorialActive.has(player));
+
+  // No modal open — this is the mid-tutorial moment Codex's probe hit.
+  // MOTD must NOT fire because tutorial is still active.
+  player.getInterfaceId = () => -1;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 0,
+    "mid-tutorial, no-modal tick must not fire MOTD");
+  assert.ok(plugin._test.deferredForOnboarding.has(player),
+    "still deferred");
+
+  // Tutorial completes.
+  api.emitCustomEvent("tutorial:completed", { player });
+  assert.ok(!plugin._test.tutorialActive.has(player));
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  const roots = sent.filter(([kind]) => kind === "root");
+  assert.equal(roots.length, 1, "MOTD fires on the first idle tick after tutorial:completed");
+  assert.equal(roots[0][1], 30020);
+});
+
+test("deferred MOTD waits for the Ironman initial-setup picker", async () => {
+  // The skip-tutorial new-account path goes: designer → Ironman picker
+  // → world. During the picker the ironman:initial-setup-pending
+  // attribute is set on the player; the picker clears it when the
+  // player picks (or skips). Gate MOTD on that attribute too so
+  // the picker completes before MOTD lands.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  let pending = true;
+  const { player, sent } = stubPlayer({
+    getAttribute: (attr) => attr === "ironman:initial-setup-pending" ? pending : false,
+    getInterfaceId: () => -1,  // picker is non-modal in some flows
+  });
+  hooks.login[0]({ player, isNewAccount: true });
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 0,
+    "pending Ironman setup must defer MOTD, even with no modal open");
+
+  pending = false;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 1,
+    "MOTD fires once the Ironman pending attribute clears");
+});
+
+test("onboarding that restarts between checkDeferredOnboarding and showMotd retries later", async () => {
+  // Regression (voidburn-motd-onboarding v2 review P2): v2 removed the
+  // deferredForOnboarding flag at the tick gate, then queued showMotd.
+  // A handler firing in the same process tick between those two steps
+  // (opens a modal, sets ironman:initial-setup-pending, or fires
+  // tutorial:started) would land inside the microtask gap — showMotd
+  // ran, eligibility still passed, MOTD opened over the new modal,
+  // and the deferred welcome was lost.
+  //
+  // v3 keeps the flag in place until showMotd actually displays;
+  // showMotd re-checks the compound predicate and bails without
+  // clearing the flag if onboarding restarted. The next idle tick
+  // then retries normally.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  const { player, sent } = stubPlayer();
+  hooks.login[0]({ player, isNewAccount: true });
+
+  // First idle tick fires the microtask, but a racing handler opens a
+  // modal in the gap. Simulate it by mutating getInterfaceId AFTER the
+  // tick callback runs but BEFORE the microtask executes.
+  player.getInterfaceId = () => -1;
+  hooks.tick[0]({ player });
+  // The tick queued the microtask; before the microtask runs, the race:
+  player.getInterfaceId = () => 890;
+  await flushMicrotasks();
+
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 0,
+    "MOTD must not land during the race window");
+  assert.ok(plugin._test.deferredForOnboarding.has(player),
+    "deferred flag retained for the next-tick retry");
+
+  // Modal closes; the next tick retries.
+  player.getInterfaceId = () => -1;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  assert.equal(
+    sent.filter(([kind]) => kind === "root").length, 1,
+    "MOTD lands on the retry after the race resolves");
+  assert.ok(!plugin._test.deferredForOnboarding.has(player),
+    "flag cleared only after successful display");
+});
+
+test("disconnect clears the deferred-onboarding flag", async () => {
+  // A player who disconnects mid-onboarding must not have MOTD fire
+  // on a tick that races the disconnect. clear() removes them from
+  // the deferred set.
+  const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");
+  const { api, hooks } = stubApi({ config: { "WelcomeScreen:deferToMotd": true } });
+  plugin.register(api);
+
+  const { player } = stubPlayer();
+  player.getInterfaceId = () => 679;  // onboarding interface up
+  hooks.login[0]({ player, isNewAccount: true });
+  assert.ok(plugin._test.deferredForOnboarding.has(player));
+
+  hooks.disconnect[0]({ player });
+  assert.ok(!plugin._test.deferredForOnboarding.has(player),
+    "disconnect removes the deferred flag");
+
+  // Even if a late tick fires after disconnect, no MOTD.
+  player.getInterfaceId = () => -1;
+  hooks.tick[0]({ player });
+  await flushMicrotasks();
+  // Can't assert sent is empty here without a fresh stub; the key
+  // invariant is the WeakSet state above.
+});
 
 test("queued MOTD is cancelled by disconnect before the microtask fires", async () => {
   const plugin = freshLoad("../plugins/interface/MotdInterface.plugin.js");

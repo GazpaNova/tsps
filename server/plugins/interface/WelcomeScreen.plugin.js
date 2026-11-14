@@ -32,7 +32,12 @@ function greet(player) {
 
 function login({ player, isNewAccount }) {
   greet(player);
-  // Mobile, new accounts and Wilderness logins enter the world directly.
+  // Mobile, new accounts, bots and Wilderness logins enter the world directly
+  // through the stock flow. The new-account bypass is retained here so a world
+  // running with `deferToMotd=false` continues to skip 378 for first logins
+  // (stock behavior). Under `deferToMotd=true`, MOTD handles the new-account
+  // welcome via a deferred fire after the onboarding cascade completes; the
+  // shared eligibility check below still routes returning players either way.
   if (isNewAccount || player.isPlayerBot?.() === true || inWilderness(player)
       || player.getAttribute(api.core.MOBILE_CLIENT_ATTRIBUTE) === true) return;
   // Voidburn: when MOTD is on, let it handle this login and skip 378. Shared
