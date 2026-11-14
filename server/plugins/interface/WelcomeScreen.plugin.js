@@ -1,3 +1,5 @@
+const { isMotdEligible } = require("./motd/eligibility");
+
 const WELCOME_SCREEN_GROUP_ID = 378;
 const PLAY_BUTTON_UID = (WELCOME_SCREEN_GROUP_ID << 16) | 72;
 const FIRST_OPTION_FLAG = 1 << 1;
@@ -33,6 +35,9 @@ function login({ player, isNewAccount }) {
   // Mobile, new accounts and Wilderness logins enter the world directly.
   if (isNewAccount || player.isPlayerBot?.() === true || inWilderness(player)
       || player.getAttribute(api.core.MOBILE_CLIENT_ATTRIBUTE) === true) return;
+  // Voidburn: when MOTD is on, let it handle this login and skip 378. Shared
+  // eligibility ensures both plugins always agree about whose turn it is.
+  if (isMotdEligible(api, { player, isNewAccount })) return;
   pending.add(player);
   // The synchronous login bootstrap initializes camera, chat and account varcs first.
   queueMicrotask(() => showWelcomeScreen(player));

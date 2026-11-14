@@ -139,6 +139,22 @@ object TspsClientPacket {
 
     /** `HANDSHAKE_CAPABILITY_NATIVE_CLIENT` in ClientProtocol.ts. */
     const val CAPABILITY_NATIVE_CLIENT = 0x1
+
+    /**
+     * `HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN` in ClientProtocol.ts. Set by the Voidburn
+     * RuneLite plugin at login time to tell tsps that server-defined custom interfaces
+     * (group id >= 30000) can be rendered on this session. Without the bit, tsps
+     * routes those sessions to the stock welcome flow instead of the MOTD — the
+     * production activation gate for `WelcomeScreen:deferToMotd`.
+     *
+     * The gateway does not set this bit on its own: the Voidburn RuneLite plugin
+     * is a separate piece that injects the capability when present. Vanilla RuneLite
+     * and RSProx sessions therefore reach tsps without the bit, and tsps keeps them
+     * on the stock 378 welcome screen. This leaves the bit reserved and documented
+     * here so both sides use the same number when the plugin ships.
+     */
+    const val CAPABILITY_VOIDBURN_PLUGIN = 0x2
+
     private const val CLIENT_TYPE_DESKTOP = 0
     private const val CHAT_KIND_PUBLIC = 0
     private const val CHAT_KIND_CLAN = 4
@@ -150,12 +166,20 @@ object TspsClientPacket {
     fun loginForget(username: String, token: String): ByteArray =
         TspsWriter().string(username).string(token).varByte(LOGIN_FORGET)
 
-    fun handshake(username: String): ByteArray =
+    /**
+     * Send tsps the handshake for this RuneLite session.
+     *
+     * `extraCapabilities` is OR'd with `CAPABILITY_NATIVE_CLIENT`. The gateway passes
+     * `0` by default; the Voidburn RuneLite plugin passes `CAPABILITY_VOIDBURN_PLUGIN`
+     * through this parameter once it is built so tsps's MOTD plugin becomes eligible
+     * for this session.
+     */
+    fun handshake(username: String, extraCapabilities: Int = 0): ByteArray =
         TspsWriter()
             .string(username)
             .u8(0) // no appearance; tsps sends it
             .u8(CLIENT_TYPE_DESKTOP)
-            .u8(CAPABILITY_NATIVE_CLIENT)
+            .u8(CAPABILITY_NATIVE_CLIENT or extraCapabilities)
             .varByte(HANDSHAKE)
 
     fun ping(time: Int): ByteArray = TspsWriter().i32(time).fixed(PING)

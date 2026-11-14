@@ -30,7 +30,7 @@ function findMultiplier(player, kind) {
 
 function rollEntry(table) {
   const [id, min, max] = Common.randomOf(Common.data.loot[table]);
-  return [id, Common.randomInt(min, max)];
+  return [id, Common.randomInt(min, max) * 2]; // Voidburn ordinary loot quantity.
 }
 
 /** The Wiki's coffin loot for `floor`: marks, one tier roll, and the lockpick by chance. */

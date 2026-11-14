@@ -385,10 +385,10 @@ test("Shades of Mort'ton repairs to native 100/20, sanctifies serum and complete
   h.object(O.BROKEN_WALL);
   assert.match(h.messages.at(-1), /material resource pool/);
 
-  // Twenty material sets are 100% resources (Wiki: 5% a set); one click keeps building.
-  h.give(I.LIMESTONE_BRICK, 20);
-  h.give(I.PLANK, 20);
-  h.give(I.SWAMP_PASTE, 100);
+  // Ten material sets fill the Voidburn repair pool; one click keeps building.
+  h.give(I.LIMESTONE_BRICK, 10);
+  h.give(I.TIMBER_BEAM, 10);
+  h.give(I.SWAMP_PASTE, 50);
   h.equipment.hands = I.FLAMTAER_BRACELET;
   const random = Math.random;
   Math.random = () => 0; // every build roll succeeds
@@ -665,7 +665,7 @@ test("Shades of Mort'ton first repair gives the captured 1% repair / 2% sanctity
     Math.random = random;
   }
   assert.equal(h.configs.get(343), 1);
-  assert.equal(h.configs.get(344), 4, 'one set is 5% resources and the build spent 1%');
+  assert.equal(h.configs.get(344), 9, 'one set is 10% resources and the build spent 1%');
   assert.equal(h.configs.get(345), 2);
   h.setLocation(3432, 2930); // stepping away ends the building
   h.runTasks();
@@ -1101,11 +1101,11 @@ test("Shades repair fans out between real world players and preserves personal s
   const wall = new core.GameObject(O.BROKEN_WALL, wallLocation, 10, 0, null);
   const repair = (player = a.player) => PluginManager.emitObjectInteraction({player, object:wall,
     objectId:wall.getId(), clickType:1, location:wallLocation, handled:false});
-  // Wiki: one set (1 brick, 1 plank, 5 swamp paste) is 5% resources; the click's first build spends 1%.
+  // A Voidburn material set gives 10% resources; the first build spends 1%.
   assert.equal(repair(), true, 'registered object handler receives the repair action');
   for (const id of [I.LIMESTONE_BRICK, I.PLANK, I.SWAMP_PASTE]) assert.equal(inventory.getAmount(id), 0);
   assert.equal(inventory.getAmount(I.HAMMER), 1);
-  assert.equal(a.configs.get(344), 4, 'the set became 5% resources, 1% of it built');
+  assert.equal(a.configs.get(344), 9, 'the set became 10% resources, 1% of it built');
   assert.equal(a.configs.get(343), 1);
   assert.equal(b.configs.get(343), 1, 'online observer receives the shared percentage');
   assert.equal(a.configs.get(345), 2);
@@ -1136,14 +1136,14 @@ test("Shades repair fans out between real world players and preserves personal s
   assert.equal(repair(), true, 'a builds from the resources left in their pool');
   a.player.setLocation(aside);
   assert.equal(a.configs.get(343), 3);
-  assert.equal(a.configs.get(344), 3);
+  assert.equal(a.configs.get(344), 8);
   assert.equal(b.configs.get(343), 2, 'offline observers do not receive fan-out');
   assert.equal(World.getPlayers().add(b.player), true);
   b.player.needsPlacement = false;
   PluginManager.emitPlayerLogin({ player:b.player, username:b.player.getUsername(), isNewAccount:false });
   assert.equal(b.configs.get(343), 3, 'login sends the current world state');
   assert.equal(b.configs.get(345), 0, 'logging out lost the peer\'s sanctity');
-  assert.equal(b.configs.get(344), 4, 'resources are kept across logout');
+  assert.equal(b.configs.get(344), 9, 'resources are kept across logout');
   assert.equal(quest.getStage(b.player), 55);
 
   // Restock a set at a time so the real inventory can hold the materials.
@@ -1157,7 +1157,7 @@ test("Shades repair fans out between real world players and preserves personal s
         assert.equal(inventory.getAmount(id), count);
       }
       assert.equal(repair(), true);
-      assert.equal(a.configs.get(344), 4, 'restocking adds one set and uses one build');
+      assert.equal(a.configs.get(344), 9, 'restocking adds one set and uses one build');
     }
     World.process();
   }

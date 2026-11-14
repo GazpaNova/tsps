@@ -1,0 +1,773 @@
+{
+  "tables": {
+    "hobgoblin": {
+      "replacement": {
+        "table_id": "hobgoblin",
+        "label": "Unarmed hobgoblin drops",
+        "table_name": "Hobgoblin Unarmed hobgoblin drops",
+        "wiki_page": "Hobgoblin",
+        "main_max_roll": 128,
+        "entries": [
+          {
+            "item_id": 526,
+            "name": "Bones",
+            "quantity": [
+              1,
+              1
+            ],
+            "always": true,
+            "rarity_raw": "Always",
+            "section": "100%"
+          },
+          {
+            "item_id": 1237,
+            "name": "Bronze spear",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1279,
+            "name": "Iron sword",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1207,
+            "name": "Steel dagger",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1239,
+            "name": "Iron spear",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1241,
+            "name": "Steel spear",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1295,
+            "name": "Steel longsword",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 563,
+            "name": "Law rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Runes"
+          },
+          {
+            "item_id": 555,
+            "name": "Water rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes"
+          },
+          {
+            "item_id": 554,
+            "name": "Fire rune",
+            "quantity": [
+              7,
+              7
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes"
+          },
+          {
+            "item_id": 559,
+            "name": "Body rune",
+            "quantity": [
+              6,
+              6
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes"
+          },
+          {
+            "item_id": 562,
+            "name": "Chaos rune",
+            "quantity": [
+              3,
+              3
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes"
+          },
+          {
+            "item_id": 561,
+            "name": "Nature rune",
+            "quantity": [
+              4,
+              4
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes"
+          },
+          {
+            "item_id": 564,
+            "name": "Cosmic rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Runes"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              15,
+              15
+            ],
+            "weight": 16,
+            "out_of": 128,
+            "rarity": 0.125,
+            "section": "Coins",
+            "notes": [
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              28,
+              28
+            ],
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Coins",
+            "notes": [
+              "Drop rate is decreased to 12/128 in members worlds.",
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              5,
+              5
+            ],
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Coins",
+            "notes": [
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              62,
+              62
+            ],
+            "weight": 4,
+            "out_of": 128,
+            "rarity": 0.03125,
+            "section": "Coins",
+            "notes": [
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              42,
+              42
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Coins",
+            "notes": [
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Coins",
+            "notes": [
+              "Only dropped by Hobgoblins not on Karamja."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              5,
+              5
+            ],
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              15,
+              15
+            ],
+            "weight": 16,
+            "out_of": 128,
+            "rarity": 0.125,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              28,
+              28
+            ],
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              42,
+              42
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 6306,
+            "name": "Trading sticks",
+            "quantity": [
+              62,
+              62
+            ],
+            "weight": 4,
+            "out_of": 128,
+            "rarity": 0.03125,
+            "section": "Other",
+            "notes": [
+              "Only dropped by Hobgoblins on Karamja, in place of the regular coin drops."
+            ]
+          },
+          {
+            "item_id": 225,
+            "name": "Limpwurt root",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 22,
+            "out_of": 128,
+            "rarity": 0.171875,
+            "section": "Other"
+          },
+          {
+            "item_id": 288,
+            "name": "Goblin mail",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Other",
+            "notes": [
+              "Drop rate is decreased to 2/128 in members worlds."
+            ]
+          },
+          {
+            "nothing": true,
+            "weight": 1,
+            "out_of": 128
+          },
+          {
+            "shared_table": "herb",
+            "weight": 7,
+            "out_of": 128,
+            "rarity": 0.0546875,
+            "section": "Herbs"
+          },
+          {
+            "shared_table": "gem",
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Gem drop table"
+          },
+          {
+            "shared_table": "seed",
+            "weight": 18,
+            "out_of": 128,
+            "rarity": 0.140625,
+            "section": "Seeds"
+          }
+        ],
+        "tertiary": [
+          {
+            "item_id": 11941,
+            "name": "Looting bag",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 5,
+            "rarity": 0.2,
+            "section": "Tertiary",
+            "notes": [
+              "Only dropped in the Wilderness (looting bag)"
+            ]
+          },
+          {
+            "item_id": 6802,
+            "name": "Hobgoblin champion scroll",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 5000,
+            "rarity": 0.0002,
+            "section": "Tertiary"
+          },
+          {
+            "item_id": 23182,
+            "name": "Clue scroll (beginner)",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 70,
+            "rarity": 0.0142857,
+            "section": "Tertiary",
+            "clue_scroll_box": true,
+            "notes": [
+              "Not dropped by those found in the God Wars Dungeon.",
+              "Clue scrolls will drop as scroll boxes after the completion of X Marks the Spot."
+            ]
+          }
+        ]
+      }
+    },
+    "hobgoblin_2": {
+      "replacement": {
+        "table_id": "hobgoblin_2",
+        "label": "Armed hobgoblin drops",
+        "table_name": "Hobgoblin Armed hobgoblin drops",
+        "wiki_page": "Hobgoblin",
+        "main_max_roll": 128,
+        "entries": [
+          {
+            "item_id": 526,
+            "name": "Bones",
+            "quantity": [
+              1,
+              1
+            ],
+            "always": true,
+            "rarity_raw": "Always",
+            "section": "100%"
+          },
+          {
+            "item_id": 1279,
+            "name": "Iron sword",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1207,
+            "name": "Steel dagger",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 1295,
+            "name": "Steel longsword",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Weapons"
+          },
+          {
+            "item_id": 563,
+            "name": "Law rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 555,
+            "name": "Water rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 554,
+            "name": "Fire rune",
+            "quantity": [
+              7,
+              7
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 559,
+            "name": "Body rune",
+            "quantity": [
+              6,
+              6
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 562,
+            "name": "Chaos rune",
+            "quantity": [
+              3,
+              3
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 561,
+            "name": "Nature rune",
+            "quantity": [
+              4,
+              4
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 564,
+            "name": "Cosmic rune",
+            "quantity": [
+              2,
+              2
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 826,
+            "name": "Iron javelin",
+            "quantity": [
+              5,
+              5
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Runes and ammunition"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              15,
+              15
+            ],
+            "weight": 34,
+            "out_of": 128,
+            "rarity": 0.265625,
+            "section": "Coins"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              5,
+              5
+            ],
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Coins",
+            "notes": [
+              "Drop rate is decreased to 12/128 in members worlds."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              28,
+              28
+            ],
+            "weight": 4,
+            "out_of": 128,
+            "rarity": 0.03125,
+            "section": "Coins"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              62,
+              62
+            ],
+            "weight": 4,
+            "out_of": 128,
+            "rarity": 0.03125,
+            "section": "Coins"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              42,
+              42
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Coins"
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 3,
+            "out_of": 128,
+            "rarity": 0.0234375,
+            "section": "Coins",
+            "notes": [
+              "Only dropped in members worlds."
+            ]
+          },
+          {
+            "item_id": 995,
+            "name": "Coins",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 128,
+            "rarity": 0.0078125,
+            "section": "Coins"
+          },
+          {
+            "item_id": 225,
+            "name": "Limpwurt root",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 21,
+            "out_of": 128,
+            "rarity": 0.1640625,
+            "section": "Other"
+          },
+          {
+            "item_id": 288,
+            "name": "Goblin mail",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Other",
+            "notes": [
+              "Drop rate is decreased to 2/128 in members worlds."
+            ]
+          },
+          {
+            "nothing": true,
+            "weight": 1,
+            "out_of": 128
+          },
+          {
+            "shared_table": "herb",
+            "weight": 7,
+            "out_of": 128,
+            "rarity": 0.0546875,
+            "section": "Herbs"
+          },
+          {
+            "shared_table": "gem",
+            "weight": 2,
+            "out_of": 128,
+            "rarity": 0.015625,
+            "section": "Gem drop table"
+          },
+          {
+            "shared_table": "uncommonSeed",
+            "weight": 12,
+            "out_of": 128,
+            "rarity": 0.09375,
+            "section": "Seeds"
+          }
+        ],
+        "tertiary": [
+          {
+            "item_id": 6802,
+            "name": "Hobgoblin champion scroll",
+            "quantity": [
+              1,
+              1
+            ],
+            "weight": 1,
+            "out_of": 5000,
+            "rarity": 0.0002,
+            "section": "Tertiary"
+          }
+        ]
+      }
+    }
+  }
+}

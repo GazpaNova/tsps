@@ -176,11 +176,11 @@
       "byproducts": [["BUCKET", 1]]
     }
   ],
-  "$cannonballs": "https://oldschool.runescape.wiki/w/Cannonball - any furnace with an ammo mould (1 bar -> 4) or double ammo mould (2 bars -> 8, same speed); needs Dwarf Cannon. 8 ticks, then 10 between. XP per bar from each ball's page. No captures.",
+  "$cannonballs": "https://oldschool.runescape.wiki/w/Cannonball - any furnace with an ammo mould (1 bar -> 4) or double ammo mould (2 bars -> 8, same speed); needs Dwarf Cannon. Other metals take 8 ticks, then 10 between. Voidburn steel follows normal anvil timing and gives 37.5 XP per bar. XP per bar from each ball's page. No captures.",
   "cannonballs": [
     {"ball": "BRONZE_CANNONBALL", "bar": "BRONZE_BAR", "level": 5, "xpPerBar": 8.8},
     {"ball": "IRON_CANNONBALL", "bar": "IRON_BAR", "level": 20, "xpPerBar": 17.2},
-    {"ball": "STEEL_CANNONBALL", "bar": "STEEL_BAR", "level": 35, "xpPerBar": 25.6},
+    {"ball": "STEEL_CANNONBALL", "bar": "STEEL_BAR", "level": 35, "xpPerBar": 37.5},
     {"ball": "MITHRIL_CANNONBALL", "bar": "MITHRIL_BAR", "level": 55, "xpPerBar": 34},
     {"ball": "ADAMANT_CANNONBALL", "bar": "ADAMANTITE_BAR", "level": 75, "xpPerBar": 42.4},
     {"ball": "RUNE_CANNONBALL", "bar": "RUNITE_BAR", "level": 90, "xpPerBar": 50.8}

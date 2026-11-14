@@ -41,6 +41,7 @@ export interface ShopCurrencyHandler {
 interface RuntimeShop {
     definition: ShopDefinition;
     originalAmounts: Map<number, number>;
+    preserveStock: boolean;
     itemRestockTicks: Map<number, number>;
     itemPrices: Map<number, number>;
     stock: Map<number, number>;
@@ -489,9 +490,16 @@ export class ShopManager {
             }
         }
 
+        const policy = {
+            shopId: definition.getId(), shopName: definition.getName(),
+            currency: definition.getCurrency(), preserveStock: false,
+        };
+        PluginManager.emitCustomEvent("shop:stock-policy", policy);
+
         return {
             definition,
             originalAmounts,
+            preserveStock: policy.preserveStock === true,
             itemRestockTicks,
             itemPrices,
             stock,
@@ -782,7 +790,7 @@ export class ShopManager {
         });
         Sounds.sendSound(player, Sound.PICK_UP_ITEM);
         this.refresh(shop.definition.getId());
-        this.ensureRestockTask();
+        if (!shop.preserveStock) this.ensureRestockTask();
     }
 
     /**
@@ -860,7 +868,7 @@ export class ShopManager {
             player.sendMessage("This item has no value.");
             return;
         }
-        if ((shop.stock.get(stockId) ?? 0) <= 0 && shop.order.length >= this.MAX_SHOP_ITEMS) {
+        if (!shop.preserveStock && (shop.stock.get(stockId) ?? 0) <= 0 && shop.order.length >= this.MAX_SHOP_ITEMS) {
             player.sendMessage("The shop is currently full.");
             return;
         }
@@ -899,10 +907,11 @@ export class ShopManager {
         if (!keep.keep) this.addStock(shop, stockId, quantity);
         Sounds.sendSound(player, Sound.DROP_ITEM);
         this.refresh(shop.definition.getId());
-        this.ensureRestockTask();
+        if (!shop.preserveStock) this.ensureRestockTask();
     }
 
     private static restockShop(shop: RuntimeShop): boolean {
+        if (shop.preserveStock) return false;
         const itemIds = new Set([...shop.order, ...shop.originalAmounts.keys()]);
         let changed = false;
         let pending = false;
@@ -968,6 +977,7 @@ export class ShopManager {
         if (quantity <= 0) {
             return false;
         }
+        if (shop.preserveStock) return true;
         const current = shop.stock.get(itemId) ?? 0;
         if (current <= 0 && shop.order.length >= this.MAX_SHOP_ITEMS) {
             return false;
@@ -1006,6 +1016,7 @@ export class ShopManager {
         if (removed <= 0) {
             return 0;
         }
+        if (shop.preserveStock) return removed;
         const remaining = current - removed;
         if (remaining <= 0) {
             shop.stock.delete(itemId);

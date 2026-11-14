@@ -108,3 +108,16 @@ test("a browser host with an incomplete cache fails without downloading from Ope
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+test("CacheDefinitions keeps gameval name and interface lookups working after the cache store reopens", async () => {
+  const { CacheDefinitions } = require('../dist/game/cache/CacheDefinitions');
+  CacheDefinitions.gamevals = undefined;
+  CacheDefinitions.idsByName.clear();
+  const sequence = CacheDefinitions.getSeqId('human_reachforladder');
+  assert.equal(sequence, 828);
+  await CachePipeline.initialize(path.resolve(__dirname, '..'));
+  assert.equal(CacheDefinitions.getSeqId('human_reachforladder'), sequence);
+  assert.equal(CacheDefinitions.getInterfaceId('chatbox'), 162);
+  assert.equal(CacheDefinitions.getComponentId('chatbox:chatmodal'), (162 << 16) | 568);
+});

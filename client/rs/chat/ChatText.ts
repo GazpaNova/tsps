@@ -80,5 +80,5 @@ export function sentenceCaseOsrs(input: string): string {
 }
 
 export function normalizePublicChatTextOsrs(input: string): string {
-    return escapeBracketsOsrs(sentenceCaseOsrs(input)).trim();
+    return escapeBracketsOsrs(input).trim();
 }

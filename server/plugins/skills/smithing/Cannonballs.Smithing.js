@@ -4,9 +4,9 @@
  * same speed. Every cannonball needs Dwarf Cannon. The furnace's Smelt menu offers a cannonball
  * for each bar the player carries (with a mould), and a bar used on a furnace opens it too.
  *
- * Not captured: the Wiki gives 8 ticks for the first batch and 10 between, the bone-burying
- * animation (human_pickupfloor), and the experience; the messages are the game's long-standing ones, not
- * checked against a capture (docs/smithing.md).
+ * Voidburn steel cannonballs use anvil timing and 37.5 XP per steel bar.
+ * Other metals use 8 ticks for the first batch and 10 between batches.
+ * Timing and animations follow the documented mechanics (docs/smithing.md).
  */
 const Core = require("./Core.Smithing");
 const Data = require("./Data.Smithing");
@@ -17,6 +17,8 @@ const { animation } = require("./Common.Smithing");
 const FIRST_TICKS = 8;
 const INTERVAL_TICKS = 10;
 const BALLS_PER_BAR = 4;
+// Voidburn steel batches follow anvil startup and the Smiths' uniform cadence.
+const STEEL_FIRST_DELAY_TICKS = 3;
 const QUEST = "dwarf_cannon";
 
 function mouldOf(player) {
@@ -72,11 +74,14 @@ function start(player, cannonball, amount) {
   const mould = mouldOf(player);
   const most = mould ? Math.ceil(player.getInventory().getAmount(cannonball.barId) / mould.bars) : 0;
   if (most <= 0) return false;
+  const isSteel = cannonball.barId === Core.ItemIdentifiers.STEEL_BAR;
   Sessions.start(player, {
     type: "cannonballs",
     remaining: Math.min(amount, most),
-    interval: INTERVAL_TICKS,
-    finishDelay: FIRST_TICKS,
+    interval: isSteel
+      ? require("./Anvil.Smithing").smithingInterval : INTERVAL_TICKS,
+    firstDelay: isSteel ? STEEL_FIRST_DELAY_TICKS : 0,
+    finishDelay: isSteel ? 0 : FIRST_TICKS,
     begin: (smith) => begin(smith, cannonball),
     step: (smith) => pour(smith, cannonball),
   });

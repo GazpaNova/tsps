@@ -386,6 +386,7 @@ import { WidgetInteractionController } from "./widgets/WidgetInteractionControll
 import { WidgetTransmitProcessor } from "./widgets/WidgetTransmitProcessor";
 import { CustomInterfaceRuntime } from "../widgets/custom/CustomInterfaceRuntime";
 import { PendingInterfaceUpdates } from "../widgets/custom/PendingInterfaceUpdates";
+import { CUSTOM_INTERFACE_START, CustomRootLoader } from "../widgets/custom/CustomRootLoader";
 import { HeldWidgetProperties } from "../widgets/HeldWidgetProperties";
 import { setCustomInterface } from "../common/gamemode/GamemodeContentStore";
 import {
@@ -1100,6 +1101,8 @@ export class OsrsClient {
     private unsubscribeWidgetEvents?: () => void;
     private pendingInterfaceUpdates = new PendingInterfaceUpdates();
     private pendingInterfaceOpens = new Map<number, { groupId: number }>();
+    // Handles the async fetch of server-defined root interfaces. See set_root below.
+    private customRootLoader?: CustomRootLoader;
     /**
      * Server sub-interfaces keyed by their standard (161) target uid. OSRS
      * moves these onto the new gameframe's components when the layout changes;
@@ -1610,6 +1613,26 @@ export class OsrsClient {
      * Mounts a sub-interface and runs everything the open packet asked for. `remount` mounts
      * an open again after a root change, which the server does not resend the contents of.
      */
+    /** Defers only unloaded custom roots; stock roots keep the upstream handler. */
+    private deferUnloadedCustomRoot(payload: any): boolean {
+        const groupId = payload.groupId | 0;
+        if (groupId < CUSTOM_INTERFACE_START || this.widgetManager?.getGroup(groupId)) {
+            this.customRootLoader?.cancel();
+            return false;
+        }
+        if (!this.customRootLoader) {
+            this.customRootLoader = new CustomRootLoader({
+                isGroupLoaded: (id) => Boolean(this.widgetManager?.getGroup(id)),
+                fetchInterfaceDefinition,
+                setCustomInterface,
+                handleWidgetPayload: (queued) => this.handleWidgetPayload?.(queued),
+                pendingInterfaceUpdates: this.pendingInterfaceUpdates,
+            });
+        }
+        this.customRootLoader.load(groupId, () => this.handleWidgetPayload?.(payload));
+        return true;
+    }
+
     private mountSubInterface(payload: any, remount = false): void {
         if (!this.widgetManager) {
             return;
@@ -2838,7 +2861,7 @@ export class OsrsClient {
                 }
             } else if (payload?.action === "set_root") {
                 console.log("[OsrsClient] Server setting root interface", payload.groupId);
-                if (this.widgetManager) {
+                if (this.widgetManager && !this.deferUnloadedCustomRoot?.(payload)) {
                     const previousMounts = [...this.serverSubInterfaces];
                     const previousRoot = this.widgetManager.rootInterface;
                     const gameframes = [161, 164, 165, 548, 601];
@@ -8901,7 +8924,10 @@ export class OsrsClient {
         this.lastNpcDecodeBase = undefined;
         this.npcInstances.clearLocal();
 
-        // Clear widgets
+        // Clear widgets. Cancel any in-flight custom-root fetch first so a late-
+        // arriving definition does not install itself and replay its set_root into the
+        // widget tree we are about to tear down.
+        this.customRootLoader?.cancel();
         try {
             this.widgetManager?.clear?.();
         } catch (err) {
@@ -9038,6 +9064,9 @@ export class OsrsClient {
     dispose(): void {
         document.body.classList.remove("map-editor-launching");
         console.log("[OsrsClient] Disposing...");
+        // Cancel any in-flight custom-root fetch so its late-arriving result does not
+        // install a definition and replay its set_root into a disposed client.
+        this.customRootLoader?.cancel();
         try {
             this.renderer?.stop();
         } catch {}

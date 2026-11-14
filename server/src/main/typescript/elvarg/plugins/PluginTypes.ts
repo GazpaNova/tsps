@@ -1657,6 +1657,8 @@ export interface PluginCoreApi {
   encodeClanSettingsDelta: typeof import("../net/protocol/ClientProtocol").encodeClanSettingsDelta;
   encodeClanVar: typeof import("../net/protocol/ClientProtocol").encodeClanVar;
   MOBILE_CLIENT_ATTRIBUTE: typeof import("../net/protocol/ClientProtocol").MOBILE_CLIENT_ATTRIBUTE;
+  NATIVE_CLIENT_ATTRIBUTE: typeof import("../net/protocol/ClientProtocol").NATIVE_CLIENT_ATTRIBUTE;
+  VOIDBURN_PLUGIN_ATTRIBUTE: typeof import("../net/protocol/ClientProtocol").VOIDBURN_PLUGIN_ATTRIBUTE;
   XPDROPS_ENABLED_ATTRIBUTE: typeof import("../net/protocol/ClientProtocol").XPDROPS_ENABLED_ATTRIBUTE;
   encodeGameframeBootstrap: typeof import("../net/protocol/ClientProtocol").encodeGameframeBootstrap;
   resolveGameframeRoot: typeof import("../net/protocol/ClientProtocol").resolveGameframeRoot;

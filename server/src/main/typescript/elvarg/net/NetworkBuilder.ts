@@ -37,7 +37,9 @@ import {
   MAIN_INVENTORY_WIDGET_UID,
   MOBILE_CLIENT_ATTRIBUTE,
   NATIVE_CLIENT_ATTRIBUTE,
+  VOIDBURN_PLUGIN_ATTRIBUTE,
   HANDSHAKE_CAPABILITY_NATIVE_CLIENT,
+  HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN,
   XPDROPS_ENABLED_ATTRIBUTE,
   dataOrbsHidden,
   encodeDefaultAnimations,
@@ -1665,6 +1667,7 @@ export class ClientConnection {
     // saved from a desktop session; resolveGameframeRoot reads it at boot.
     if (clientType === 1) player.setAttribute(MOBILE_CLIENT_ATTRIBUTE, true);
     if (capabilities & HANDSHAKE_CAPABILITY_NATIVE_CLIENT) player.setAttribute(NATIVE_CLIENT_ATTRIBUTE, true);
+    if (capabilities & HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN) player.setAttribute(VOIDBURN_PLUGIN_ATTRIBUTE, true);
     if (pending.save) pending.save.applyToPlayer(player);
     else PlayerSave.applyAttributeDefaults(player);
     if (isConfiguredDeveloperUsername(player.getUsername())) player.setRights(PlayerRights.DEVELOPER);

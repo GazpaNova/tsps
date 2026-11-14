@@ -54,9 +54,14 @@ function partPhrase(itemName) {
   if (/tooth|teeth/.test(name)) return "one of its teeth";
   return `its ${name}`;
 }
+const CHAT_DIALOG = 114;
 function say(player, npcId, text) {
   const { DialogueChainBuilder, NpcDialogue, EndDialogue } = H.core;
   player.getDialogueManager().startDialogues(new DialogueChainBuilder().add(new NpcDialogue(0, npcId, text), new EndDialogue(1)));
+  // Live also logs NPC dialogue to the chat as type 114 "Name|text" (RuneLite ChatMessageType.DIALOG); RuneLite's
+  // Plugin Hub "Hunter Rumours" plugin reads the hunter and rumour from it. Voidburn customization.
+  const name = H.core.NpcDefinition?.forId?.(npcId)?.getName?.();
+  if (name) player.getPacketSender().sendTypedMessage(CHAT_DIALOG, `${name}|${text}`);
 }
 function target(task) {
   const part = H.core.ItemDefinition.forId(H.core.ItemIdentifiers[task.part]).getName();

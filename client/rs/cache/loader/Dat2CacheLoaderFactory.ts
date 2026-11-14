@@ -1,5 +1,6 @@
 import { CustomDefinitionLoader } from "../../../custom/definitions/CustomDefinitionStore";
 import { CustomObjTypeLoader } from "../../../custom/items/CustomObjTypeLoader";
+import { DropAllObjTypeLoader } from "../../../custom/items/DropAllObjTypeLoader";
 import { CustomNpcTypeLoader } from "../../../custom/npcs/CustomNpcTypeLoader";
 import { createDefinitionArchiveView } from "../../../custom/archives/ArchivedDefinitionStore";
 import { ArchivedTypeLoader } from "../../config/ArchivedTypeLoader";
@@ -252,7 +253,7 @@ export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
         if (this.objTypeLoader) return this.objTypeLoader;
         if (this.cacheInfo.game === "oldschool") {
             return this.objTypeLoader = new CustomObjTypeLoader(
-                new PostProcessedObjTypeLoader(this.getArchivedLoaders().obj), this.cacheInfo);
+                new DropAllObjTypeLoader(new PostProcessedObjTypeLoader(this.getArchivedLoaders().obj)), this.cacheInfo);
         }
         let baseLoader: ObjTypeLoader;
         if (this.isIndexConfigs()) {

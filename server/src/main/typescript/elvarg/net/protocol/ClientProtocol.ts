@@ -2660,6 +2660,13 @@ export const MOBILE_CLIENT_ATTRIBUTE = "mobile-client";
 // browser wire leaves out. Transient, set from HANDSHAKE_CAPABILITY_NATIVE_CLIENT.
 export const NATIVE_CLIENT_ATTRIBUTE = "native-client";
 export const HANDSHAKE_CAPABILITY_NATIVE_CLIENT = 0x1;
+// The RuneLite session is running the Voidburn plugin bundle (the launcher's custom
+// RuneLite build with the plugin that renders server-defined custom interfaces).
+// Transient, set from HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN. Gateway currently never
+// sets this bit — the plugin itself will inject it once built. See the companion
+// RuneLite plugin work.
+export const VOIDBURN_PLUGIN_ATTRIBUTE = "voidburn-plugin";
+export const HANDSHAKE_CAPABILITY_VOIDBURN_PLUGIN = 0x2;
 export const XPDROPS_ENABLED_ATTRIBUTE = "xp-drops:enabled";
 // Mobile clients boot the Stock mobile toplevel (toplevel_osm); the client maps
 // the standard 161 mounts onto it via cache enum 1745.

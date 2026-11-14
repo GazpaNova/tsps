@@ -577,7 +577,7 @@ test("blurite needs The Knight's Sword", () => {
   assert.equal(player.xp, 8);
 });
 
-// Cannonballs (Wiki): 4 a bar in an ammo mould, 8 for two bars in a double mould, 8 ticks then 10.
+// Voidburn steel cannonballs match anvil timing and XP. The double mould still uses two bars.
 test("cannonballs pour from bars in an ammo mould after Dwarf Cannon", () => {
   const player = furnaceWith([[I.STEEL_BAR, 3], [I.AMMO_MOULD, 1]]);
   objects.get("Furnace").Smelt({ player });
@@ -591,13 +591,16 @@ test("cannonballs pour from bars in an ammo mould after Dwarf Cannon", () => {
   itemOnObject({ player, itemId: I.STEEL_BAR, object: furnace });
   assert.deepEqual(lastMenu(player).getItems(), [I.STEEL_CANNONBALL]);
   lastMenu(player).execute(I.STEEL_CANNONBALL, 2);
-  ticks(8);
+  ticks(3);
   assert.equal(player.items.get(I.STEEL_CANNONBALL) ?? 0, 0);
   ticks(1);
   assert.equal(player.items.get(I.STEEL_CANNONBALL), 4);
-  assert.equal(player.xp, 25.6);
-  ticks(10);
+  assert.equal(player.xp, 37.5);
+  ticks(4);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 4);
+  ticks(1);
   assert.equal(player.items.get(I.STEEL_CANNONBALL), 8);
+  assert.equal(player.xp, 75);
   assert.equal(player.items.get(I.STEEL_BAR), 1);
 
   const double = furnaceWith([[I.MITHRIL_BAR, 3], [I.DOUBLE_AMMO_MOULD, 1]]);
@@ -608,6 +611,37 @@ test("cannonballs pour from bars in an ammo mould after Dwarf Cannon", () => {
   assert.equal(double.items.get(I.MITHRIL_CANNONBALL), 12);
   assert.equal(double.items.get(I.MITHRIL_BAR), 0);
   assert.equal(double.xp, 34 * 3);
+});
+
+
+test("Voidburn steel double mould uses 37.5 XP per bar including a final single bar", () => {
+  const player = furnaceWith([[I.STEEL_BAR, 3], [I.DOUBLE_AMMO_MOULD, 1]]);
+  player.quests = new Set(["dwarf_cannon"]);
+  itemOnObject({ player, itemId: I.STEEL_BAR, object: furnace });
+  lastMenu(player).execute(I.STEEL_CANNONBALL, 5);
+  ticks(3);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL) ?? 0, 0);
+  ticks(1);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 8);
+  assert.equal(player.xp, 75);
+  ticks(5);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 12);
+  assert.equal(player.items.get(I.STEEL_BAR), 0);
+  assert.equal(player.xp, 112.5);
+});
+
+test("Voidburn steel cannonball cycles use the Smiths' uniform speed bonus", () => {
+  const player = furnaceWith([[I.STEEL_BAR, 3], [I.AMMO_MOULD, 1]]);
+  player.quests = new Set(["dwarf_cannon"]);
+  for (const [slot, id] of [[4, I.SMITHS_TUNIC], [7, I.SMITHS_TROUSERS], [10, I.SMITHS_BOOTS], [9, I.SMITHS_GLOVES]]) player.equipped.set(slot, id);
+  itemOnObject({ player, itemId: I.STEEL_BAR, object: furnace });
+  lastMenu(player).execute(I.STEEL_CANNONBALL, 3);
+  ticks(4);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 4);
+  ticks(3);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 4);
+  ticks(1);
+  assert.equal(player.items.get(I.STEEL_CANNONBALL), 8);
 });
 
 test("Shayzien armour from lovakite and keel parts after Pandemonium use the Wiki experience", () => {

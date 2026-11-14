@@ -245,7 +245,7 @@ function clean(player, batch) {
     xp += Mine.ORE_BY_KEY.get(key).xp;
   }
   Mine.save(player, state);
-  if (xp > 0) player.getSkillManager().addExperiences(Skill.MINING, xp);
+  if (xp > 0) player.getSkillManager().addExperiences(Skill.MINING, xp * 1.25); // Voidburn: +25% cleaning XP.
   Mine.syncVarbits(player);
   player.getPacketSender().sendSound(CLEANED_SOUND, 0, 30);
   player.sendMessage(Mine.sackTotal(state) >= Mine.capacity(state)

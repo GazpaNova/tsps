@@ -30,7 +30,7 @@
  * in issue #196) remain the starting point for the minigame state.
  *
  * The temple follows the OSRS Wiki minigame page: interface 171 shows repair
- * (varp 343, shared), resources (varp 344, the player's own pool: +5% for each
+ * (varp 343, shared), resources (varp 344, the player's own pool: +10% for each
  * set of 1 limestone brick, 1 timber beam or plank and 5 swamp paste) and
  * sanctity (varp 345, the player's own, -1% a minute and gone on logout). Each
  * successful build spends 1% resources for +1% repair; walls show the repair
@@ -129,7 +129,7 @@ module.exports = function registerShadesOfMorttonQuest(api) {
   const BUILD_ATTEMPT_TICKS = 4;
   const BUILD_SANCTITY_TENTHS = 30; // capture 1846: +2 at once, +1 four ticks later
   const BUILD_CRAFTING_XP = 76; // tip.it: "around 76 exp per 1% of used building supplies"
-  const RESOURCES_PER_SET = 5;
+  const RESOURCES_PER_SET = 10; // Voidburn: twice the standard repair resources.
   const REPAIR_IDLE_DECAY_TICKS = 100; // -1% a minute once nobody has built for a minute
   const SANCTITY_DECAY_TICKS = 100; // Wiki: -1% per minute
   const SHADE_KILL_SANCTITY_TENTHS = 20; // Wiki: 2% per shade killed near the temple
@@ -1299,7 +1299,7 @@ module.exports = function registerShadesOfMorttonQuest(api) {
     );
   }
 
-  /** Turns whole material sets from the inventory into resources, 5% each, up to 100%. */
+  /** Turns whole material sets from the inventory into resources, 10% each, up to 100%. */
   function topUpResources(player) {
     let resources = resourcesOf(player);
     let added = 0;

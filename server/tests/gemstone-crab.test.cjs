@@ -121,16 +121,16 @@ test("the crab rises with its time as its hitpoints, burrows, leaves its shell a
   assert.deepEqual([crab.location.getX(), crab.location.getY()], SPOTS[state.spot].crab);
   assert.equal(crab.locked, true, "hits never lower its hitpoints");
   assert.equal(crab.scripted, true, "core combat doesn't move it or attack with it");
-  assert.equal(crab.max, 918, "its lifetime");
+  assert.equal(crab.max, 1836, "Voidburn doubles its minimum lifetime");
   assert.deepEqual(crab.bar, { id: 20, width: 120 });
-  assert.equal(crab.xp, 0.875);
+  assert.equal(crab.xp, 1.15, "Voidburn grants 15% bonus damage-based combat XP");
   assert.deepEqual(crab.animations, [12481]);
   assert.deepEqual(crab.graphics, [3454], "it rises with vfx_crab_boss_death");
 
   tick();
-  assert.equal(crab.hitpoints, 917, "a tick of its time gone");
+  assert.equal(crab.hitpoints, 1835, "a tick of its time gone");
   const firstSpot = state.spot;
-  for (let t = 0; t < 917; t++) tick();
+  for (let t = 0; t < 1835; t++) tick();
   assert.deepEqual(crab.animations.slice(-1), [12482], "it burrows when its time is up");
   assert.deepEqual(crab.graphics.slice(-1), [3454]);
   assert.equal(crab.hitpoints, 1, "never 0, which would kill it (a death, drops, a respawn)");
@@ -296,4 +296,11 @@ test("combat XP against an NPC is scaled by its multiplier (the crab's 3.5 per d
   };
   CombatFactory.rewardExp(attacker, hit);
   assert.deepEqual(xp, [["Hitpoints", 14], ["Strength", 42]], "12 damage: 14 Hitpoints, 42 Strength (3.5 each)");
+});
+
+
+test("Voidburn doubles the maximum active crab lifetime without extending the shell timer", () => {
+  withRandom(0.999999, () => spawnCrab());
+  assert.equal(state.lifetime, 2172);
+  assert.equal(state.endsAt - state.tick, 2172);
 });

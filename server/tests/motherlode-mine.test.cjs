@@ -168,7 +168,7 @@ beforeEach(() => {
   for (const strut of Machine.struts) strut.breaksAt = Infinity;
 });
 
-test("pay-dirt is a nugget 1 in 32 at any level, and coal falls from 96.9% at 30 to 24.6% at 99 (Wiki)", () => {
+test("Voidburn pay-dirt has a 3/32 nugget chance at every level and preserves ore level requirements", () => {
   const chances = (level) => {
     let left = 1;
     const out = {};
@@ -179,9 +179,9 @@ test("pay-dirt is a nugget 1 in 32 at any level, and coal falls from 96.9% at 30
     }
     return out;
   };
-  for (const level of [30, 60, 99]) assert.equal(chances(level).nugget, 1 / 32);
-  assert.equal(chances(30).coal.toFixed(3), "0.969");
-  assert.equal(chances(99).coal.toFixed(3), "0.246");
+  for (const level of [30, 60, 99]) assert.equal(chances(level).nugget, 3 / 32);
+  assert.equal(chances(30).coal.toFixed(3), "0.906");
+  assert.equal(chances(99).coal.toFixed(3), "0.230");
   assert.equal(chances(84).runite, 0, "runite needs 85");
   assert.equal(withRandom(0.99, () => Mine.rollOre(99)).key, "coal");
 });
@@ -195,7 +195,7 @@ test("the live veins are spawned over the map's depleted ones", () => {
   assert.equal(Mine.isUpperLevel(3729, 5650), false);
 });
 
-test("mining a vein gives pay-dirt with its ore rolled then, and the vein depletes on a timer", () => {
+test("mining a vein gives 25% more XP and the vein never depletes", () => {
   const vein = [...Veins.veins.values()].find((candidate) => !candidate.upper && candidate.respawnsAt < 0);
   const p = player(vein.tile[0] - 1, vein.tile[1]);
   p.inventory.add({ getId: () => ItemIds.DRAGON_PICKAXE, getAmount: () => 1 });
@@ -205,18 +205,16 @@ test("mining a vein gives pay-dirt with its ore rolled then, and the vein deplet
   withRandom(0, () => ticks(3));
   assert.equal(p.inventory.getAmount(Mine.PAY_DIRT), 1);
   assert.equal(p.messages.at(-1), "You manage to mine some pay-dirt.");
-  assert.deepEqual(p.xp.at(-1), ["Mining", 60]);
+  assert.deepEqual(p.xp.at(-1), ["Mining", 75]);
   assert.deepEqual(Mine.stateOf(p).held, ["nugget"], "its ore is rolled as it is mined");
   // Wiki (Rock golem): Motherlode Mine 247,200, a roll per pay-dirt.
   assert.deepEqual(petRolls.filter((r) => r.player === p).map((r) => [r.skill, r.petBase]), [[Skill.MINING, 247200]]);
-  assert.ok(vein.depletesAt > now, "its first pay-dirt starts its timer");
+  assert.equal(vein.depletesAt, -1, "no depletion timer starts");
 
   Veins.stopMining(p);
-  ticks(vein.depletesAt - now);
-  assert.ok(locAt(vein.depletedId, vein.tile), "depleted");
-  assert.equal(locAt(vein.oreId, vein.tile), null);
-  ticks(vein.respawnsAt - now);
-  assert.ok(locAt(vein.oreId, vein.tile), "and back");
+  ticks(1000);
+  assert.ok(locAt(vein.oreId, vein.tile), "still active long after its former lifetime");
+  assert.equal(locAt(vein.depletedId, vein.tile), null);
 });
 
 test("a gem pre-roll hit (Wiki, Ore vein: 'can not receive an ore') gives no pay-dirt, no XP and leaves the vein", () => {
@@ -231,7 +229,7 @@ test("a gem pre-roll hit (Wiki, Ore vein: 'can not receive an ore') gives no pay
   assert.equal(vein.depletesAt, -1, "the vein's timer isn't started");
 });
 
-test("the full prospector outfit raises the pay-dirt's 60 Mining XP to 61.5 (Wiki Prospector_outfit, 2.5%)", () => {
+test("the full prospector outfit adds 2.5% to Voidburn's 75 Mining XP per pay-dirt", () => {
   const vein = [...Veins.veins.values()].find((candidate) => !candidate.upper && candidate.respawnsAt < 0 && candidate.depletesAt < 0);
   const { ItemIdentifiers: I, Equipment: E } = require("../dist/plugins/PluginManager").PluginManager.getCoreApi();
   const worn = { [E.HEAD_SLOT]: I.GOLDEN_PROSPECTOR_HELMET, [E.BODY_SLOT]: I.PROSPECTOR_JACKET,
@@ -241,7 +239,7 @@ test("the full prospector outfit raises the pay-dirt's 60 Mining XP to 61.5 (Wik
   withRandom(0, () => interact("Ore vein", "Mine", { player: p, objectId: vein.oreId, location: { x: vein.tile[0], y: vein.tile[1], z: 0 } }));
   withRandom(0, () => ticks(3));
   assert.equal(p.xp.at(-1)[0], "Mining");
-  assert.ok(Math.abs(p.xp.at(-1)[1] - 61.5) < 1e-9);
+  assert.ok(Math.abs(p.xp.at(-1)[1] - 76.875) < 1e-9);
   Veins.stopMining(p);
 });
 
@@ -264,7 +262,7 @@ test("deposited pay-dirt floats down the channel and washes into ore in the sack
   assert.equal(spawned[0].removed, true);
   assert.deepEqual(Mine.stateOf(p).sack, { runite: 1, coal: 1 });
   assert.equal(p.varbits.get(Mine.VARBIT_SACK), 2);
-  assert.deepEqual(p.xp.at(-1), ["Mining", 90], "75 for the runite and 15 for the coal");
+  assert.deepEqual(p.xp.at(-1), ["Mining", 112.5], "25% more than 75 for runite and 15 for coal");
   assert.equal(p.messages.at(-1), "Some ore is ready to be collected from the sack.");
 });
 
@@ -405,7 +403,7 @@ test("the upper hopper is used across its railings, from the walkway in front of
   assert.equal(lower.destination, undefined, "the lower hopper is walked to as usual");
 });
 
-test("a rockfall is mined away for 10 XP, then comes down again on whoever stands there", () => {
+test("a rockfall is mined away for 12.5 XP, then comes down again on whoever stands there", () => {
   const tile = [3728, 5688];
   const rock = locAt(26679, tile);
   assert.ok(rock);
@@ -414,7 +412,7 @@ test("a rockfall is mined away for 10 XP, then comes down again on whoever stand
   interact("Rockfall", "Mine", { player: p, object: rock, objectId: 26679, location: { x: tile[0], y: tile[1], z: 0 } });
   ticks(2);
   assert.equal(locAt(26679, tile), null, "gone 2 ticks after the swing");
-  assert.deepEqual(p.xp.at(-1), ["Mining", 10]);
+  assert.deepEqual(p.xp.at(-1), ["Mining", 12.5]);
 
   const entry = Rockfalls.cleared[0];
   const under = player(...tile);
@@ -496,6 +494,53 @@ test("the crates give a hammer or a bronze pickaxe, unless one is carried (rspro
 
   // Every other crate is left to the other "Crate" handlers.
   assert.equal(search({ player: searcher, location: { x: 3200, y: 3200, z: 0 } }), false);
+});
+
+test('tripled nuggets use a 3/32 roll at all eligible levels, with league chance boosts still composable', () => {
+  for (const level of [30, 60, 99]) {
+    assert.equal(Mine.rollOre(level, () => 3 / 32 - 0.000001).key, 'nugget');
+    assert.notEqual(Mine.rollOre(level, () => 3 / 32).key, 'nugget');
+    assert.equal(Mine.rollOre(level, () => 0.18, 2).key, 'nugget');
+  }
+  assert.notEqual(Mine.rollOre(29, () => 0).key, 'nugget', 'Mining requirement remains');
+});
+
+test('upper-level veins also stay active after repeated mining and the old maximum lifetime', () => {
+  const vein = [...Veins.veins.values()].find(v => v.upper);
+  const p = player(vein.tile[0] - 1, vein.tile[1]);
+  p.inventory.add({getId: () => ItemIds.DRAGON_PICKAXE, getAmount: () => 1});
+  interact('Ore vein', 'Mine', {player: p, objectId: vein.oreId, location: {x: vein.tile[0], y: vein.tile[1], z: 0}});
+  withRandom(0, () => ticks(12));
+  assert.ok(p.inventory.getAmount(Mine.PAY_DIRT) > 1);
+  assert.equal(vein.depletesAt, -1);
+  Veins.stopMining(p);
+  ticks(1000);
+  assert.ok(locAt(vein.oreId, vein.tile));
+  assert.equal(locAt(vein.depletedId, vein.tile), null);
+});
+
+test('both wheels start fixed, break on the normal timer and schedule another breakdown after repair', () => {
+  withRandom(0, () => Machine.start(now));
+  const firstBreak = 2 * 97;
+  for (const strut of Machine.struts) {
+    assert.equal(strut.broken, false);
+    assert.equal(strut.breaksAt, now + firstBreak);
+  }
+  ticks(firstBreak - 1);
+  assert.equal(Machine.isFlowing(), true);
+  ticks(1);
+  assert.ok(Machine.struts.every((strut) => strut.broken));
+  assert.equal(Machine.isFlowing(), false);
+
+  const [strut] = Machine.struts;
+  const [x, y] = strut.strut;
+  const smith = player(x - 1, y);
+  smith.inventory.add({ getId: () => ItemIdentifiers.HAMMER, getAmount: () => 1 });
+  interact("Broken strut", "Hammer", { player: smith, objectId: Machine.BROKEN_STRUT, location: { x, y, z: 0 } });
+  withRandom(0, () => ticks(1));
+  assert.equal(strut.broken, false);
+  assert.equal(strut.breaksAt, now + firstBreak);
+  assert.equal(Machine.isFlowing(), true);
 });
 
 test("a dragon pickaxe's 1/6 quick roll mines pay-dirt on the second tick, as Mining rolls anywhere (Wiki, Pickaxe)", () => {

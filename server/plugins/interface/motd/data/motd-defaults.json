@@ -1,0 +1,21 @@
+{
+  "title": "Welcome to Voidburn",
+  "tagline": "Vanilla OSRS, with slight QoL. 24/7 hosted. Bilingual community.",
+  "aboutHeading": "About Voidburn",
+  "aboutBody": "We are a small, friendly community. We aim to give a Vanilla OSRS experience with no custom content, tweaking a few things, mainly balance changes thought out for a massive MMO or to compensate for the existence of bots. There are both spanish and english speakers in our community, and everyone is welcome.",
+  "ratesHeading": "XP rates",
+  "ratesTiers": [
+    { "label": "1x", "skills": ["Attack", "Strength", "Defence", "Hitpoints", "Ranged", "Magic"] },
+    { "label": "2x", "skills": ["Prayer", "Cooking", "Slayer", "Sailing"] },
+    { "label": "3x", "skills": ["Woodcutting", "Fletching", "Fishing", "Firemaking", "Crafting", "Smithing", "Herblore", "Thieving", "Farming", "Construction", "Hunter"] },
+    { "label": "4x", "skills": ["Mining", "Agility", "Runecrafting"] }
+  ],
+  "changesHeading": "Our changes",
+  "changesBody": "Minigame grinds are faster. Combat training methods are a bit faster than vanilla. Almost all drop rates are the same as official OSRS.",
+  "whatsNewHeading": "What's new",
+  "whatsNewBody": "We just launched this MOTD thingy. Neat, huh? There is a skinless corpse under my bed.",
+  "discordUrl": "https://discord.gg/YqtxvMF79y",
+  "githubUrl": "https://github.com/RSPSApp/tsps",
+  "launcherUrl": "https://github.com/GazpaNova/VoidburnLauncher",
+  "playButtonLabel": "Enter Voidburn"
+}

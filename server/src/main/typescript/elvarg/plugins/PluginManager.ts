@@ -2701,6 +2701,8 @@ export class PluginManager {
       encodeClanSettingsDelta: require("../net/protocol/ClientProtocol").encodeClanSettingsDelta,
       encodeClanVar: require("../net/protocol/ClientProtocol").encodeClanVar,
       MOBILE_CLIENT_ATTRIBUTE: require("../net/protocol/ClientProtocol").MOBILE_CLIENT_ATTRIBUTE,
+      NATIVE_CLIENT_ATTRIBUTE: require("../net/protocol/ClientProtocol").NATIVE_CLIENT_ATTRIBUTE,
+      VOIDBURN_PLUGIN_ATTRIBUTE: require("../net/protocol/ClientProtocol").VOIDBURN_PLUGIN_ATTRIBUTE,
       XPDROPS_ENABLED_ATTRIBUTE: require("../net/protocol/ClientProtocol").XPDROPS_ENABLED_ATTRIBUTE,
       encodeGameframeBootstrap: require("../net/protocol/ClientProtocol").encodeGameframeBootstrap,
       resolveGameframeRoot: require("../net/protocol/ClientProtocol").resolveGameframeRoot,

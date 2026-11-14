@@ -14,7 +14,7 @@ const { ObjectManager, nearbyPlayers, areaSound } = require("./World.MotherlodeM
 const ROCKFALLS = new Set([26679, 26680]);
 /** As captured: it's gone 2 ticks after the swing, for 10 XP (Wiki). */
 const MINE_TICKS = 2;
-const ROCKFALL_XP = 10;
+const ROCKFALL_XP = 12.5; // Voidburn: +25%, before the global Mining XP rate.
 const MINED_SOUND = 3600;
 /** Captured 78 ticks; OpenRune's (ISC) 80-100. */
 const RESPAWN_TICKS = [78, 100];
