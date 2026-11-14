@@ -1,6 +1,7 @@
 package com.voidburn.plugin;
 
 import com.google.inject.Provides;
+import java.awt.event.MouseEvent;
 import java.util.Optional;
 import javax.inject.Inject;
 import net.runelite.api.Client;
@@ -9,6 +10,8 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.OverlayMenuClicked;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.input.MouseAdapter;
+import net.runelite.client.input.MouseManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
@@ -46,6 +49,9 @@ public class VoidburnPlugin extends Plugin {
     @Inject
     private OverlayManager overlayManager;
 
+    @Inject
+    private MouseManager mouseManager;
+
     /**
      * Live view of what custom interfaces are open on this session. Written from the
      * OkHttp dispatcher via onFrame; readable from any thread (the InterfaceState's
@@ -56,6 +62,7 @@ public class VoidburnPlugin extends Plugin {
 
     private MotdOverlay motdOverlay;
     private PluginConnection connection;
+    private MouseAdapter mouseListener;
 
     @Provides
     VoidburnConfig provideConfig(ConfigManager configManager) {
@@ -67,6 +74,8 @@ public class VoidburnPlugin extends Plugin {
         log.info("Voidburn plugin starting");
         motdOverlay = new MotdOverlay(client, () -> Optional.of(interfaceState));
         overlayManager.add(motdOverlay);
+        mouseListener = new MotdMouseListener();
+        mouseManager.registerMouseListener(mouseListener);
         openConnection();
     }
 
@@ -74,6 +83,10 @@ public class VoidburnPlugin extends Plugin {
     protected void shutDown() {
         log.info("Voidburn plugin stopping");
         closeConnection();
+        if (mouseListener != null) {
+            mouseManager.unregisterMouseListener(mouseListener);
+            mouseListener = null;
+        }
         if (motdOverlay != null) {
             overlayManager.remove(motdOverlay);
             motdOverlay = null;
@@ -160,5 +173,77 @@ public class VoidburnPlugin extends Plugin {
 
     private static String safe(String s) {
         return s == null ? "" : s.trim();
+    }
+
+    /**
+     * Routes left-clicks that land on a MOTD hit region to the server as
+     * plugin → gateway click frames. Only {@link MouseEvent#BUTTON1 left
+     * clicks} are consumed here; every other mouse event is passed through
+     * untouched so RuneLite's normal game handling (camera, right-click
+     * menus, middle-click) runs unaffected.
+     *
+     * Runs on the AWT event thread. Reads the overlay's published hit
+     * regions via {@link MotdOverlay#hitTest}, which is volatile-safe
+     * against the client-thread render.
+     *
+     * Consumption contract: when a click lands on a hit region, the
+     * MouseEvent is {@link MouseEvent#consume consumed} before being
+     * returned, so the canvas's own click handler does not also see the
+     * click (an un-consumed click on top of the panel would also fire a
+     * "walk here" or a NPC click underneath). When the click misses every
+     * region, the event is returned unchanged.
+     */
+    private final class MotdMouseListener extends MouseAdapter {
+        @Override
+        public MouseEvent mouseClicked(MouseEvent event) {
+            return maybeHandle(event);
+        }
+
+        @Override
+        public MouseEvent mousePressed(MouseEvent event) {
+            // Consuming mousePressed is what keeps the canvas from starting
+            // a left-click-drag (camera rotate etc) when the player presses
+            // on the panel. We don't act on it — the click is fired on
+            // release from mouseClicked — but we DO consume the press that
+            // lands on our hit region so the game doesn't treat it as the
+            // start of a world interaction.
+            return maybeHandle(event);
+        }
+
+        private MouseEvent maybeHandle(MouseEvent event) {
+            if (motdOverlay == null) return event;
+            if (event.getButton() != MouseEvent.BUTTON1) return event;
+            Optional<MotdOverlay.HitRegion> hit = motdOverlay.hitTest(event.getX(), event.getY());
+            if (hit.isEmpty()) return event;
+            // mousePressed arrives before mouseClicked; we only want to
+            // dispatch once per click, on mouseClicked. mousePressed still
+            // consumes so the canvas doesn't start a drag on our panel.
+            if (event.getID() == MouseEvent.MOUSE_CLICKED) {
+                dispatchClick(hit.get());
+            }
+            event.consume();
+            return event;
+        }
+
+        private void dispatchClick(MotdOverlay.HitRegion region) {
+            PluginConnection c = connection;
+            if (c == null) {
+                log.debug("Voidburn plugin: click on widget {} dropped — no connection", region.widgetUid());
+                return;
+            }
+            String frame = ClickFrame.build(region.widgetUid(), region.op());
+            boolean sent = c.send(frame);
+            if (!sent) {
+                log.debug("Voidburn plugin: click on widget {} dropped — connection not ready", region.widgetUid());
+                return;
+            }
+            // The server's widget_set_root follows on the back of this
+            // click; dismissing locally gives the user instant visual
+            // feedback instead of waiting a tick for the root change to
+            // land. Dismissal is cleared on the next openConnection()
+            // (new login / config change), so re-opening the plugin after
+            // a Play click still shows MOTD if the server reopens it.
+            motdOverlay.dismiss();
+        }
     }
 }

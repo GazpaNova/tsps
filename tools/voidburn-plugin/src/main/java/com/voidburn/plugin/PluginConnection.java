@@ -109,6 +109,34 @@ final class PluginConnection {
     }
 
     /**
+     * Send one text frame upstream (plugin → gateway). Drops silently when the
+     * connection is stopped, not yet open, or has already closed — the caller
+     * can retry on the next event or just move on. Thread-safe: callable from
+     * any thread, including the RuneLite client thread and the AWT event
+     * thread.
+     *
+     * Lifecycle: the stopped/connectionOpen check and the actual
+     * {@code WebSocket.send} both run under {@link #lock}, so a concurrent
+     * {@link #stop} cannot slip between the check and the send and leak this
+     * frame onto a connection the owner has torn down. OkHttp's send is a
+     * non-blocking enqueue (it writes to its own writer thread's queue and
+     * returns), so holding {@code lock} across it is safe.
+     *
+     * Returns true when the frame was enqueued onto the socket's writer,
+     * false when it was dropped. Dropping is not an error — a MOTD click
+     * that lands while the plugin is mid-reconnect is just a missed click,
+     * no worse than a click on a game frame that didn't paint.
+     */
+    boolean send(String message) {
+        synchronized (lock) {
+            if (stopped || !connectionOpen || webSocket == null) {
+                return false;
+            }
+            return webSocket.send(message);
+        }
+    }
+
+    /**
      * Close any live connection and refuse further reconnect attempts.
      * Idempotent; safe to call from any thread.
      */

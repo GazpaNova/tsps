@@ -7,7 +7,9 @@ import java.awt.Graphics2D;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -56,9 +58,58 @@ public class MotdOverlay extends Overlay {
     private static final int PANEL_HEIGHT = 460;
     private static final int PANEL_PADDING = 20;
 
+    /**
+     * Play-button layout pinned to Layout.MotdInterface.js (component 186).
+     * Width 144, height 28, positioned at the far right of the footer with
+     * a 16-px gutter from the panel's right edge and the same vertical
+     * anchor as the server-side layer (y = 406 from panel top).
+     */
+    private static final int PLAY_BUTTON_WIDTH = 144;
+    private static final int PLAY_BUTTON_HEIGHT = 28;
+    private static final int PLAY_BUTTON_RIGHT_PADDING = 16;
+    private static final int PLAY_BUTTON_Y_FROM_PANEL_TOP = 406;
+
+    /** Component id and op for the Play button. Mirrors Layout.MotdInterface.js. */
+    private static final int PLAY_BUTTON_COMPONENT_ID = 186;
+    private static final int PLAY_BUTTON_OP = 1;
+    private static final int PLAY_BUTTON_UID =
+        (MotdPresentation.MOTD_GROUP_ID << 16) | PLAY_BUTTON_COMPONENT_ID;
+
+    /** Voidburn purple for the Play button fill; gold for its label. */
+    private static final Color PLAY_BUTTON_FILL = new Color(0x6b, 0x16, 0xe8, 160);
+    private static final Color PLAY_BUTTON_BORDER = new Color(0xd4, 0xb8, 0x1b);
+    private static final Color PLAY_BUTTON_LABEL = new Color(0xd4, 0xb8, 0x1b);
+
+    /** Text drawn in the Play button. */
+    private static final String PLAY_BUTTON_LABEL_TEXT = "Enter Voidburn";
+
     private final Supplier<Optional<InterfaceState>> stateSupplier;
     private final Client client;
     private final AtomicBoolean dismissed = new AtomicBoolean(false);
+
+    /**
+     * Hit regions published by the most recent {@link #render} on the client
+     * thread, read by the AWT event thread from {@link #hitTest}. Volatile
+     * reference + immutable {@link List#copyOf} snapshot = a reader always
+     * sees either the previous render's regions or the new render's
+     * regions, never a half-constructed list.
+     *
+     * Empty when the overlay isn't currently showing (render() short-circuits
+     * before publishing regions in that case) or when no clickable widget
+     * was drawn this frame.
+     */
+    private volatile List<HitRegion> hitRegions = Collections.emptyList();
+
+    /**
+     * A screen-space rectangle attached to a server component. On a mouse
+     * click inside {@link #bounds}, the plugin sends a click frame carrying
+     * {@link #widgetUid} and {@link #op} upstream.
+     */
+    public record HitRegion(Rectangle bounds, int widgetUid, int op) {
+        public HitRegion {
+            Objects.requireNonNull(bounds, "bounds");
+        }
+    }
 
     public MotdOverlay(Client client, Supplier<Optional<InterfaceState>> stateSupplier) {
         this.client = client;
@@ -88,11 +139,21 @@ public class MotdOverlay extends Overlay {
      */
     public void dismiss() {
         dismissed.set(true);
+        // Clear published hit regions immediately so a second click that
+        // arrives before the next render can't re-activate the retired
+        // button. hitTest also guards on isShowing() — belt and suspenders,
+        // but both paths independently cover the "state change outruns the
+        // next render" window.
+        hitRegions = Collections.emptyList();
     }
 
     /** Re-arm MOTD display — called when a new connection starts. */
     public void reset() {
         dismissed.set(false);
+        // Same reasoning as dismiss(): the previous session's regions must
+        // not survive into the new one. The next render will re-publish for
+        // the fresh session once a widget_set_root lands.
+        hitRegions = Collections.emptyList();
     }
 
     /**
@@ -123,9 +184,15 @@ public class MotdOverlay extends Overlay {
 
     @Override
     public Dimension render(Graphics2D g) {
-        if (!isShowing()) return null;
+        if (!isShowing()) {
+            hitRegions = Collections.emptyList();
+            return null;
+        }
         Optional<MotdPresentation> maybe = stateSupplier.get().flatMap(MotdPresentation::from);
-        if (maybe.isEmpty()) return null;
+        if (maybe.isEmpty()) {
+            hitRegions = Collections.emptyList();
+            return null;
+        }
         MotdPresentation p = maybe.get();
 
         Rectangle bounds = client.getCanvas().getBounds();
@@ -169,7 +236,87 @@ public class MotdOverlay extends Overlay {
         y = drawLine(g, p.footer().github(), contentX, y, contentW, MUTED_COLOR, 11, false);
         drawLine(g, p.footer().launcher(), contentX, y, contentW, MUTED_COLOR, 11, false);
 
+        // Play button. Drawing uses the same coordinates computeHitRegions
+        // reports, so what gets painted is exactly what will be clickable.
+        List<HitRegion> regions = computeHitRegions(bounds.width, bounds.height);
+        for (HitRegion region : regions) {
+            if (region.widgetUid() == PLAY_BUTTON_UID) {
+                Rectangle b = region.bounds();
+                drawPlayButton(g, b.x, b.y);
+            }
+        }
+        hitRegions = regions;
+
         return new Dimension(bounds.width, bounds.height);
+    }
+
+    /**
+     * Compute the clickable hit regions for a viewport of the given size.
+     * Pure function — called from {@link #render} on the client thread and
+     * directly from unit tests that reason about geometry without a
+     * {@link Graphics2D}.
+     *
+     * The panel is centered on the viewport using the same math {@link #render}
+     * uses; the Play button is anchored to the panel's top-left exactly as
+     * {@code Layout.MotdInterface.js} declares (panel-space
+     * x = {@value #PANEL_WIDTH} - {@value #PLAY_BUTTON_WIDTH} -
+     * {@value #PLAY_BUTTON_RIGHT_PADDING},
+     * y = {@value #PLAY_BUTTON_Y_FROM_PANEL_TOP}).
+     */
+    static List<HitRegion> computeHitRegions(int viewportWidth, int viewportHeight) {
+        int px = Math.max(0, (viewportWidth - PANEL_WIDTH) / 2);
+        int py = Math.max(0, (viewportHeight - PANEL_HEIGHT) / 2);
+        int pw = Math.min(PANEL_WIDTH, viewportWidth);
+        int playX = px + pw - PLAY_BUTTON_WIDTH - PLAY_BUTTON_RIGHT_PADDING;
+        int playY = py + PLAY_BUTTON_Y_FROM_PANEL_TOP;
+        return List.of(new HitRegion(
+            new Rectangle(playX, playY, PLAY_BUTTON_WIDTH, PLAY_BUTTON_HEIGHT),
+            PLAY_BUTTON_UID,
+            PLAY_BUTTON_OP));
+    }
+
+    /**
+     * Draw the "Enter Voidburn" button at the given screen coordinates.
+     * Rendering is independent of the hit region: a reader of
+     * {@link #hitRegions} gets the exact bounds that were painted.
+     */
+    private void drawPlayButton(Graphics2D g, int x, int y) {
+        g.setColor(PLAY_BUTTON_FILL);
+        g.fillRect(x, y, PLAY_BUTTON_WIDTH, PLAY_BUTTON_HEIGHT);
+        g.setColor(PLAY_BUTTON_BORDER);
+        g.drawRect(x, y, PLAY_BUTTON_WIDTH - 1, PLAY_BUTTON_HEIGHT - 1);
+        g.setColor(PLAY_BUTTON_LABEL);
+        g.setFont(g.getFont().deriveFont(java.awt.Font.BOLD, 13f));
+        FontMetrics fm = g.getFontMetrics();
+        int textWidth = fm.stringWidth(PLAY_BUTTON_LABEL_TEXT);
+        int tx = x + (PLAY_BUTTON_WIDTH - textWidth) / 2;
+        int ty = y + (PLAY_BUTTON_HEIGHT - fm.getHeight()) / 2 + fm.getAscent();
+        g.drawString(PLAY_BUTTON_LABEL_TEXT, tx, ty);
+    }
+
+    /**
+     * Hit-test an AWT canvas-space click against the currently published
+     * regions. Returns the matching region on a hit, or empty when the
+     * point is outside every clickable area. Safe to call from the AWT
+     * event thread.
+     *
+     * Visibility gate: hit-testing always consults {@link #isShowing}
+     * first. The published regions snapshot only refreshes at render
+     * cadence, so a state change that flips the overlay off (local
+     * dismiss, a server-driven root swap to a different group, or a
+     * connection reset) must deactivate regions immediately rather than
+     * wait for the next render. Otherwise a second click arriving in
+     * that window double-sends, and a click after a root swap sends to
+     * a no-longer-visible interface (v1 review P2).
+     */
+    public Optional<HitRegion> hitTest(int x, int y) {
+        if (!isShowing()) return Optional.empty();
+        for (HitRegion region : hitRegions) {
+            if (region.bounds().contains(x, y)) {
+                return Optional.of(region);
+            }
+        }
+        return Optional.empty();
     }
 
     private int drawLine(Graphics2D g, String text, int x, int y, int maxWidth,
